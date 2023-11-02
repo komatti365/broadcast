@@ -1,0 +1,8 @@
+version: "1"
+rules:
+  - base: original
+    upstream: nucosen:main
+    mergeMethod: hardreset
+  - base: docs
+    upstream: owner:docs
+    mergeMethod: hardreset
