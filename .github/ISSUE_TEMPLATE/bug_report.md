@@ -3,7 +3,7 @@ name: Bug report
 about: バグの報告
 title: ''
 labels: p2:不具合
-assignees: ''
+assignees: sitting-cat
 
 ---
 
@@ -20,4 +20,3 @@ assignees: ''
 
 
 **補遺**
-
