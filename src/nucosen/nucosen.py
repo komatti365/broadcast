@@ -21,8 +21,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from os import getcwd
+from pathlib import Path
 from traceback import format_exc
 
+import requests
 from decouple import AutoConfig
 
 from nucosen import clock, db, live, personality, quote, sessionCookie
@@ -35,11 +37,43 @@ def run():
         database = db.RestDbIo()
         configLoader = AutoConfig(getcwd())
 
-        def config(key): return str(configLoader(key, default=""))
-        logininfo = config("NICO_ID"), config("NICO_PW"), config("NICO_TFA")
-        if "" in logininfo:
-            getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
-            raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
+        def config(key, default=""):
+            # Wrapper around decouple.AutoConfig to accept a default value.
+            return str(configLoader(key, default=default))
+
+        def config_bool(key, default=False):
+            return configLoader(key, default=default, cast=bool)
+
+        def config_int(key, default=0):
+            try:
+                return int(configLoader(key, default=default))
+            except (TypeError, ValueError):
+                return default
+
+        queuePreloadSize = max(1, config_int("QUEUE_PRELOAD_SIZE", 10))
+
+        autoReserveEnabled = config_bool("NUCOSEN_AUTO_RESERVE", default=True)
+
+        def _build_video_info_message(template: str, info: dict) -> str:
+            text = template.replace("\\n", "\n")
+            mapping = {
+                "id": info.get("id", ""),
+                "title": info.get("title", ""),
+                "length": info.get("length", ""),
+                "view": info.get("view_counter", 0),
+                "comment": info.get("comment_num", 0),
+                "mylist": info.get("mylist_counter", 0),
+                "description": info.get("description", ""),
+                "username": info.get("user_nickname", ""),
+                "url": f"http://nico.ms/{info.get('id', '')}"
+            }
+            for key, value in mapping.items():
+                text = text.replace("{" + key + "}", str(value))
+            return text
+
+        def _send_discord_notification(url: str, content: str):
+            resp = requests.post(url, json={"content": content})
+            resp.raise_for_status()
 
         SPECIFIC_VIDEO_IDS = [
             (config("MAINTENANCE_VIDEO_ID") or "sm17759202"),
@@ -47,8 +81,66 @@ def run():
         ]
         MAINTENANCE, CLOSING = 0, 1
 
-        session = sessionCookie.Session(*logininfo)
-        session.login()
+        def get_secret(key: str, default: str = "") -> str:
+            """Read secret from {key}_FILE or fallback to {key} environment variable."""
+            file_path = config(f"{key}_FILE", default="")
+            if file_path:
+                p = Path(file_path)
+                if p.exists():
+                    try:
+                        with p.open("r", encoding="utf-8") as f:
+                            return f.read().strip()
+                    except Exception as e:
+                        getLogger(__name__).warning(f"{key}_FILE の読み込みに失敗しました: {e}")
+                else:
+                    getLogger(__name__).warning(f"{key}_FILE に指定されたパスが見つかりません: {file_path}")
+            return config(key, default=default)
+
+        # Allow authentication via an access token extracted from cookies
+        # (set the environment variable `NICO_TOKEN` or `NICO_TOKEN_FILE` to the `user_session` value),
+        # or by reusing a previously saved cookie file (`NICO_COOKIE_FILE`).
+        token = get_secret("NICO_TOKEN")
+        cookie_file = config("NICO_COOKIE_FILE", default="")
+        
+        def _get_login_info():
+            return get_secret("NICO_ID"), get_secret("NICO_PW"), get_secret("NICO_TFA")
+
+        if token:
+            session = sessionCookie.Session.from_access_token(token)
+        elif cookie_file:
+            p = Path(cookie_file)
+            if p.exists():
+                try:
+                    session = sessionCookie.Session.from_cookie_file(cookie_file)
+                except (ValueError, FileNotFoundError) as e:
+                    logger.warning(f"クッキーファイルが無効です: {e}")
+                    logger.info("ユーザー名/パスワードで再度ログインします")
+                    logininfo = _get_login_info()
+                    if "" in logininfo:
+                        getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
+                        raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
+                    session = sessionCookie.Session(*logininfo)
+                    session.login()
+                    # Save cookies after successful login for future reuse
+                    try:
+                        session.save_cookies(cookie_file)
+                    except Exception:
+                        getLogger(__name__).warning("クッキーの保存に失敗しました")
+            else:
+                logger.debug(f"クッキーファイルが指定されていますが存在しません: {cookie_file}")
+                logininfo = _get_login_info()
+                if "" in logininfo:
+                    getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
+                    raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
+                session = sessionCookie.Session(*logininfo)
+                session.login()
+        else:
+            logininfo = _get_login_info()
+            if "" in logininfo:
+                getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
+                raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
+            session = sessionCookie.Session(*logininfo)
+            session.login()
         logger.debug("チャンネルループ開始")
 
         ngTags = set(config("NG_TAGS").split(","))
@@ -59,13 +151,20 @@ def run():
             if liveIDs[0] is None:
                 if liveIDs[1] is None:
                     logger.warning("W0L 枠未検出")
-                    live.reserveLive(
-                        title=config("LIVE_TITLE"),
-                        communityId=config("COMMUNITY"),
-                        tags=config("TAGS").split(","),
-                        session=session
-                    )
-                    liveIDs = live.getLives(session)
+                    if autoReserveEnabled:
+                        live.reserveLive(
+                            title=config("LIVE_TITLE"),
+                            communityId=config("COMMUNITY"),
+                            tags=config("TAGS").split(","),
+                            session=session
+                        )
+                        liveIDs = live.getLives(session)
+                    else:
+                        logger.info(
+                            "自動枠取りは無効です。現在および次の枠が存在しないため、60秒後に再試行します。"
+                        )
+                        clock.waitUntil(datetime.now(timezone.utc) + timedelta(minutes=1))
+                        continue
                 nextLive: str | None = liveIDs[0] or liveIDs[1]
                 if nextLive is None:
                     raise Exception("V10 予約確認エラー")
@@ -73,13 +172,19 @@ def run():
                 clock.waitUntil(nextLiveBegin)
                 liveIDs = live.getLives(session)
             elif liveIDs[1] is None:
-                live.reserveLive(
-                    title=config("LIVE_TITLE"),
-                    communityId=config("COMMUNITY"),
-                    tags=config("TAGS").split(","),
-                    session=session
-                )
-            liveIDs = live.sGetLives(session)
+                if autoReserveEnabled:
+                    live.reserveLive(
+                        title=config("LIVE_TITLE"),
+                        communityId=config("COMMUNITY"),
+                        tags=config("TAGS").split(","),
+                        session=session
+                    )
+                    liveIDs = live.getLives(session)
+                else:
+                    logger.info("自動枠取りは無効です。次枠の予約はスキップします。")
+
+            if liveIDs[0] is not None and liveIDs[1] is not None:
+                liveIDs = live.sGetLives(session)
             logger.info("現枠: {0}, 次枠: {1}".format(liveIDs[0], liveIDs[1]))
 
             logger.debug("現存する引用状態の処理")
@@ -93,16 +198,27 @@ def run():
                         liveIDs[0], SPECIFIC_VIDEO_IDS[MAINTENANCE], session)
                 elif currentQuote == SPECIFIC_VIDEO_IDS[CLOSING]:
                     logger.info("エンディング動画の引用を検知しました")
-                    nextLiveBegin = live.getStartTime(liveIDs[1], session)
-                    clock.waitUntil(currentLiveEnd)
-                    live.reserveLive(
-                        title=config("LIVE_TITLE"),
-                        communityId=config("COMMUNITY"),
-                        tags=config("TAGS").split(","),
-                        session=session
-                    )
-                    clock.waitUntil(nextLiveBegin)
-                    liveIDs = live.sGetLives(session)
+                    if liveIDs[1] is None:
+                        logger.info(
+                            "次枠が未予約のため、自動枠取りは行いません。現在の枠終了まで待機します。"
+                        )
+                        clock.waitUntil(currentLiveEnd)
+                    else:
+                        nextLiveBegin = live.getStartTime(liveIDs[1], session)
+                        clock.waitUntil(currentLiveEnd)
+                        if autoReserveEnabled:
+                            live.reserveLive(
+                                title=config("LIVE_TITLE"),
+                                communityId=config("COMMUNITY"),
+                                tags=config("TAGS").split(","),
+                                session=session
+                            )
+                        else:
+                            logger.info(
+                                "自動枠取りは無効です。次枠は手動で予約してください。"
+                            )
+                        clock.waitUntil(nextLiveBegin)
+                        liveIDs = live.getLives(session)
                 else:
                     logger.info("一般動画の引用を検知しました: {0}".format(currentQuote))
                     quote.stop(liveIDs[0], session)
@@ -119,27 +235,67 @@ def run():
                         liveIDs[0], emergencyStopMessage, session)
                     clock.waitUntil(maintenanceEnd)
 
-            currentLiveId = live.sGetLives(session)[0]
+            currentLiveId = liveIDs[0]
             logger.info("放送の準備が整いました: {0}".format(currentLiveId))
             while True:
 
-                nextVideoId = database.dequeue()
-                if nextVideoId is None:
-                    logger.debug("キューが空なので補充を行います")
-                    requests = database.getAndResetRequests()
-                    if requests is not None:
-                        winners = personality.choiceFromRequests(requests, 5)
-                        if winners is None:
-                            logger.error("E40 抽選アボート {0}".format(requests))
+                def ensure_preloaded_queue():
+                    current_queue_count = database.getQueueCount()
+                    if current_queue_count >= queuePreloadSize:
+                        return
+                    logger.info(
+                        "キューを事前登録します: 現在 %d 件, 目標 %d 件",
+                        current_queue_count,
+                        queuePreloadSize,
+                    )
+                    missing = queuePreloadSize - current_queue_count
+                    max_attempts = 5
+                    while missing > 0 and max_attempts > 0:
+                        try:
                             selection = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags)
-                        else:
-                            selection = winners.pop()
-                            database.enqueueByList(winners)
-                    else:
+                            database.enqueueByList([selection])
+                            current_queue_count = database.getQueueCount()
+                            missing = queuePreloadSize - current_queue_count
+                        except Exception as err:
+                            logger.warning("ランダム補充に失敗しました: %s", err)
+                            break
+                        finally:
+                            max_attempts -= 1
+
+                    if missing > 0:
+                        logger.info("事前キューが目標数に達しませんでした: %d 件不足", missing)
+
+                db_requests = database.getAndResetRequests()
+                if db_requests is not None:
+                    winners = personality.choiceFromRequests(db_requests, 5)
+                    if winners is None:
+                        logger.error("E40 抽選アボート {0}".format(db_requests))
                         selection = personality.randomSelection(
                             config("REQTAGS").split(","), session, ngTags)
+                    else:
+                        selection = winners.pop()
+                        database.enqueueByList(winners)
                     nextVideoId = selection
+                else:
+                    ensure_preloaded_queue()
+                    nextVideoId = database.dequeue()
+                    if nextVideoId is None:
+                        logger.debug("キューが空なので補充を行います")
+                        request_ids = database.getAndResetRequests()
+                        if request_ids is not None:
+                            winners = personality.choiceFromRequests(request_ids, 5)
+                            if winners is None:
+                                logger.error("E40 抽選アボート {0}".format(request_ids))
+                                selection = personality.randomSelection(
+                                    config("REQTAGS").split(","), session, ngTags)
+                            else:
+                                selection = winners.pop()
+                                database.enqueueByList(winners)
+                        else:
+                            selection = personality.randomSelection(
+                                config("REQTAGS").split(","), session, ngTags)
+                        nextVideoId = selection
 
                 logger.info("引用を開始します: {0}".format(nextVideoId))
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
@@ -147,6 +303,31 @@ def run():
                 if videoInfo[0] is False:
                     raise Exception("V20 引用不能エラー {0} {1}".format(
                         nextVideoId, currentLiveId))
+                if config_bool("DISCORD_ON_VIDEOINFO", default=False):
+                    webhook = config("DISCORD_VIDEOINFO_WEBHOOK", default="") or config("LOGGING_DISCORD_WEBHOOK", default="")
+                    if webhook:
+                        try:
+                            videoDetail = quote.getThumbInfo(nextVideoId)
+                            discordMessage = _build_video_info_message(
+                                config("DISCORD_VIDEOINFO_TEXT", default="再生中:{title}\nhttp://nico.ms/{id} #{id}\n再生時間:{length} 再生数:{view} コメント:{comment} マイリスト:{mylist}"),
+                                videoDetail
+                            )
+                            _send_discord_notification(webhook, discordMessage)
+                        except Exception as err:
+                            logger.warning("Discord動画情報送信に失敗しました: %s", err)
+                    else:
+                        logger.warning("DISCORD_ON_VIDEOINFO が有効ですが、DISCORD_VIDEOINFO_WEBHOOK または LOGGING_DISCORD_WEBHOOK が設定されていません。")
+
+                if config_bool("BROADCASTER_ON_VIDEOINFO", default=False):
+                    try:
+                        videoDetail = quote.getThumbInfo(nextVideoId)
+                        broadcasterMessage = _build_video_info_message(
+                            config("BROADCASTER_VIDEOINFO_TEXT", default="放送者コメント:{title}\n再生時間:{length} 再生数:{view} コメント:{comment} マイリスト:{mylist}"),
+                            videoDetail
+                        )
+                        live.showMessage(currentLiveId, broadcasterMessage, session)
+                    except Exception as err:
+                        logger.warning("放送者コメント動画情報送信に失敗しました: %s", err)
                 if datetime.now(timezone.utc) + videoInfo[1] > currentLiveEnd - timedelta(minutes=1):
                     logger.info("引用アボート: 時間内に引用が終了しない見込みです")
                     database.priorityEnqueue(nextVideoId)
@@ -160,6 +341,7 @@ def run():
                     clock.waitUntil(currentLiveEnd)
                     break
                 quote.once(currentLiveId, nextVideoId, session)
+                database.recordQuotedVideo(nextVideoId, currentLiveId)
                 live.showMessage(currentLiveId, videoInfo[2], session)
                 clock.waitUntil(datetime.now(timezone.utc) + videoInfo[1])
                 logger.info("引用終了見込み時刻になりました")

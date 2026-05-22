@@ -20,6 +20,8 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Optional
+import json
+from pathlib import Path
 
 from pyotp import TOTP
 from requests import Response, get, post
@@ -65,7 +67,8 @@ class Session(object):
         resp.raise_for_status()
         if "user_session" in resp.cookies:
             self.cookie = resp.cookies
-            getLogger(__name__).info("通常ログイン成功")
+            getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
+            self._auto_save_cookie()
             return
         if "mfa_session" in resp.cookies:
             self.__mfa_login(resp, header)
@@ -95,8 +98,18 @@ class Session(object):
         resp.raise_for_status()
         if "user_session" in resp.cookies:
             self.cookie = resp.cookies
+            getLogger(__name__).info("ユーザー名/パスワード（MFA付き）によるログイン成功")
+            self._auto_save_cookie()
             return
         raise ReLoginRequested("V40 MFA失敗")
+
+    def _auto_save_cookie(self):
+        cookie_file = config("NICO_COOKIE_FILE", default="")
+        if cookie_file:
+            try:
+                self.save_cookies(cookie_file)
+            except Exception as e:
+                getLogger(__name__).warning(f"クッキーの自動保存に失敗しました: {e}")
 
     def getSessionString(self) -> Optional[str]:
         # NOTE - X-niconico-sessionなどに使用
@@ -105,3 +118,60 @@ class Session(object):
         if not "user_session" in self.cookie:
             return
         return self.cookie["user_session"]
+
+    @classmethod
+    def from_access_token(cls, access_token: str, user_agent: str = UserAgent):
+        """Create a Session using an existing `user_session` access token.
+
+        This avoids performing a login with username/password and MFA.
+        The provided token is placed into a RequestsCookieJar so existing
+        code that relies on `session.cookie` continues to work.
+        """
+        session = cls("", "", "", user_agent=user_agent)
+        jar = RequestsCookieJar()
+        jar.set("user_session", access_token, domain=".nicovideo.jp", path="/")
+        session.cookie = jar
+        getLogger(__name__).info("認証済み情報によるログイン")
+        return session
+
+    def save_cookies(self, path: str):
+        """Save current cookies to a file as a simple JSON mapping name->value.
+
+        Only saves cookie name and value; this is sufficient for `user_session`.
+        """
+        if self.cookie is None:
+            getLogger(__name__).warning("クッキーが空のため保存できませんでした")
+            return
+        data = {c.name: c.value for c in self.cookie}
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        getLogger(__name__).info(f"クッキーを保存しました: {path}")
+
+    @classmethod
+    def from_cookie_file(cls, path: str, user_agent: str = UserAgent):
+        """Create a Session loading cookies from a JSON file saved by `save_cookies`.
+
+        If the file contains name->value mapping, cookies are created with a
+        default domain of `.nicovideo.jp` and path `/`.
+        """
+        p = Path(path)
+        if not p.exists():
+            raise FileNotFoundError(path)
+        if p.stat().st_size == 0:
+            raise ValueError(f"クッキーファイルが空です: {path}")
+        try:
+            with p.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"クッキーファイルのJSON形式が不正です: {path} ({e})")
+        if not isinstance(data, dict):
+            raise ValueError(f"クッキーファイルは辞書形式である必要があります: {path}")
+        jar = RequestsCookieJar()
+        for name, value in data.items():
+            jar.set(name, value, domain=".nicovideo.jp", path="/")
+        session = cls("", "", "", user_agent=user_agent)
+        session.cookie = jar
+        getLogger(__name__).info("認証済み情報によるログイン")
+        return session

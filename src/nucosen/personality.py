@@ -18,7 +18,8 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from logging import getLogger
-from random import randint, shuffle
+from random import randint, shuffle, uniform
+from time import sleep
 from typing import List, Optional
 
 from requests import get
@@ -38,6 +39,23 @@ class RetryRequested(Exception):
 
 config = AutoConfig(getcwd())
 NetworkErrors = (HTTPError, ConnError, RetryRequested)
+
+
+def floatConfig(key, default=0.0):
+    try:
+        return float(config(key, default=str(default)))
+    except (TypeError, ValueError):
+        return default
+
+NICO_REQUEST_DELAY = max(0.0, floatConfig("NICO_REQUEST_DELAY", 1.0))
+
+
+def nicovideo_delay():
+    if NICO_REQUEST_DELAY <= 0:
+        return
+    sleep(NICO_REQUEST_DELAY * uniform(0.9, 1.1))
+
+
 UserAgent = str(config("NUCOSEN_UA_PREFIX", default="anonymous")
                 ) + " / NUCOSen Broadcast Personality System"
 
@@ -84,6 +102,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set) -> str:
 
     ngVideos = str(config("NG_VIDEO_IDS",default="")).split(",")
 
+    nicovideo_delay()
     response = get(url, headers=header, params=payload)
     result = dict(response.json())
     # スナップショット検索が死んでいるときはテレビちゃんを休ませる

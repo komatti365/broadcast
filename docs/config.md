@@ -11,9 +11,19 @@ NUCOSen Broadcastが読み取る環境変数の一覧は次の通りです。
 | NICO_ID | ニコニコアカウントのメールアドレス |
 | NICO_PW | （機密）ニコニコアカウントのパスワード |
 | NICO_TFA | （機密）ニコニコアカウントの2段階認証を突破するための鍵 |
+| NICO_TOKEN | （省略可）ブラウザから抽出した `user_session` 値を直接指定すると、ユーザー名/パスワードを使わずに認証できます |
+| NICO_COOKIE_FILE | （省略可）ログイン時のクッキーを保存/再利用するファイルパス。指定すると初回ログイン後にクッキーが保存され、次回以降はそのファイルからクッキーを読み込んで再利用します |
+| NICO_REQUEST_DELAY | （省略可）ニコニコAPI呼び出し前の待機秒数。視聴者相当の遅延を入れるための設定。省略時は1.0秒。 |
 | LOGGING_DISCORD_WEBHOOK | （機密）ログの送信先。DiscordのウェブフックURL |
+| DISCORD_VIDEOINFO_WEBHOOK | （機密）動画情報通知に使うDiscordのウェブフックURL。未指定時はLOGGING_DISCORD_WEBHOOKを代替利用します |
+| DISCORD_ON_VIDEOINFO | （省略可）1を指定すると引用開始時に動画情報をDiscordに送信します |
+| DISCORD_VIDEOINFO_TEXT | （省略可）動画情報通知メッセージのテンプレート。{title},{id},{length},{view},{comment},{mylist},{description} が使えます |
+| BROADCASTER_ON_VIDEOINFO | （省略可）1を指定すると引用開始時に放送者コメントで動画情報を表示します |
+| BROADCASTER_VIDEOINFO_TEXT | （省略可）放送者コメントのテンプレート。{title},{id},{length},{view},{comment},{mylist},{description} が使えます |
 | QUEUE_URL | 放送待ちデータベースのURL |
 | REQUEST_URL | リクエスト受理待ちデータベースのURL |
+| QUEUE_PRELOAD_SIZE | （省略可）キューを事前登録する最大件数。省略時は10。 |
+| QUOTED_URL | （省略可）引用済み動画記録先のデータベースURL。指定すると、実施された各引用動画がこのURLに記録されます |
 | DB_KEY | （機密）データベースのアクセス鍵 |
 | NG_TAGS | 放送自主規制の対象。タグ単位。半角コンマ（,）区切り |
 | --- | --- ▲設定必須 --- ▼省略可 --- |

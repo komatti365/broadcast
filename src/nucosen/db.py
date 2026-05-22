@@ -21,6 +21,7 @@ from logging import getLogger
 from os import getcwd
 from re import match
 from typing import Dict, Iterable, List, Optional
+from datetime import datetime, timezone
 
 from decouple import AutoConfig
 from requests import delete, get, post
@@ -35,9 +36,26 @@ class RestDbIo(object):
     # TODO - 非同期実行ができるリクエストにスレッドを使って高速化
     def __init__(self):
         config = AutoConfig(getcwd())
+
+        def get_secret(key: str, default=None):
+            from pathlib import Path
+            file_path = str(config(f"{key}_FILE", default=""))
+            if file_path:
+                p = Path(file_path)
+                if p.exists():
+                    try:
+                        with p.open("r", encoding="utf-8") as f:
+                            return f.read().strip()
+                    except Exception as e:
+                        getLogger(__name__).warning(f"{key}_FILE の読み込みに失敗しました: {e}")
+                else:
+                    getLogger(__name__).warning(f"{key}_FILE に指定されたパスが見つかりません: {file_path}")
+            return config(key, default=default)
+
         queueUrl = config("QUEUE_URL", default=None)
         requestUrl = config("REQUEST_URL", default=None)
-        key = config("DB_KEY", default=None)
+        quotedUrl = config("QUOTED_URL", default=None)
+        key = get_secret("DB_KEY", default=None)
         if None in (queueUrl, requestUrl, key):
             raise Exception("V0E 環境変数エラー {0} {1} {2}".format(
                 queueUrl, requestUrl, key))
@@ -46,6 +64,7 @@ class RestDbIo(object):
         self.isQueueUpdated: bool = True
         self.__queueUrl = str(queueUrl)
         self.__requestUrl = str(requestUrl)
+        self.__quotedUrl = quotedUrl
         self.__header = header
         self.__dequeueCache: List[Dict[str, str]] = []
 
@@ -66,6 +85,17 @@ class RestDbIo(object):
         self.__deleteQueueItem(result["_id"])
         return result["videoId"]
 
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".getQueueVideoIds"))
+    def getQueueVideoIds(self) -> set[str]:
+        query = '?h={"$fields":{"videoId":1}}'
+        resp = get(self.__queueUrl + query, headers=self.__header)
+        resp.raise_for_status()
+        queues: List[Dict[str, str]] = resp.json()
+        return {item["videoId"] for item in queues if item.get("videoId")}
+
+    def getQueueCount(self) -> int:
+        return len(self.getQueueVideoIds())
+
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".__deleteQueueItem"))
     def __deleteQueueItem(self, itemId: str):
         resp = delete(self.__queueUrl+"/"+itemId, headers=self.__header)
@@ -73,12 +103,17 @@ class RestDbIo(object):
 
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".enqueueByList"))
     def enqueueByList(self, items: Iterable[str]):
+        existingVideoIds = self.getQueueVideoIds()
         payload = list()
         for item in items:
-            if match("^[a-z][a-z][0-9]+$", item):
-                payload.append({"videoId": item})
-            else:
+            if not match("^[a-z][a-z][0-9]+$", item):
                 getLogger(__name__).error("E09 通常エンキューのアボート {0}".format(item))
+                continue
+            if item in existingVideoIds:
+                getLogger(__name__).debug("重複動画をスキップしました: {0}".format(item))
+                continue
+            payload.append({"videoId": item})
+            existingVideoIds.add(item)
         if len(payload) < 1:
             return
         resp = post(self.__queueUrl, json=payload, headers=self.__header)
@@ -115,3 +150,36 @@ class RestDbIo(object):
         resp = delete(
             self.__requestUrl+"/*", json=items, headers=self.__header)
         resp.raise_for_status()
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".recordQuotedVideo"))
+    def recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
+        """Record a quoted/broadcasted video to the database.
+        
+        Args:
+            videoId: The video ID (e.g., 'sm12345678')
+            liveId: The live broadcast ID (e.g., 'lv123456789')
+            
+        Returns:
+            bool: True if recording was successful, False if database URL is not configured
+        """
+        if self.__quotedUrl is None:
+            getLogger(__name__).debug("QUOTED_URL が設定されていないため、引用済み動画の記録をスキップします")
+            return False
+        
+        if not match("^[a-z][a-z][0-9]+$", videoId):
+            getLogger(__name__).error("E02 引用済み動画記録のアボート 無効な動画ID {0}".format(videoId))
+            return False
+        
+        try:
+            payload = {
+                "videoId": videoId,
+                "liveId": liveId,
+                "quotedAt": datetime.now(timezone.utc).isoformat()
+            }
+            resp = post(self.__quotedUrl, json=payload, headers=self.__header)
+            resp.raise_for_status()
+            getLogger(__name__).debug("引用済み動画を記録しました: {0} (Live: {1})".format(videoId, liveId))
+            return True
+        except Exception as e:
+            getLogger(__name__).error("引用済み動画の記録に失敗しました: {0}".format(e))
+            return False

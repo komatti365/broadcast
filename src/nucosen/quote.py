@@ -23,6 +23,7 @@ from datetime import timedelta
 from logging import getLogger
 from typing import Optional, Tuple, Dict, Any
 from time import sleep
+from random import uniform
 
 from requests import delete, get, post, patch
 from requests.exceptions import ConnectionError as ConnError
@@ -44,9 +45,31 @@ class RetryRequired(Exception):
 
 config = AutoConfig(getcwd())
 NetworkErrors = (HTTPError, ConnError, ReLoggedIn, RetryRequired)
-sourceList = \
-    ("quote", "self") if bool(config("QUOTE_MAIN", default=False)) \
+
+def boolConfig(key, default=False):
+    value = config(key, default=default)
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("1", "true", "yes", "on")
+
+
+def floatConfig(key, default=0.0):
+    try:
+        return float(config(key, default=str(default)))
+    except (TypeError, ValueError):
+        return default
+
+NICO_REQUEST_DELAY = max(0.0, floatConfig("NICO_REQUEST_DELAY", 1.0))
+
+def nicovideo_delay():
+    if NICO_REQUEST_DELAY <= 0:
+        return
+    sleep(NICO_REQUEST_DELAY * uniform(0.9, 1.1))
+
+sourceList = (
+    ("quote", "self") if boolConfig("QUOTE_MAIN", False)
     else ("self", "quote")
+)
 layoutSettings = {
     "main": {
         "source": sourceList[0],
@@ -55,17 +78,18 @@ layoutSettings = {
     "sub": {
         "source": sourceList[1],
         "volume": float(config("SUB_VOLUME", default=0.5)),
-        "isSoundOnly": str(bool(config("SUB_SOUND_ONLY", default=False))).lower()
+        "isSoundOnly": boolConfig("SUB_SOUND_ONLY", False)
     }
 }
 quoteBotUri = \
-    "https://lapi.spi.nicovideo.jp/v1/services/quotation/contents/{0}/bots" \
+    "https://services-eapi.spi.nicovideo.jp/v1/services/quotation/contents/{0}/bots" \
     if config("USE_OLD_QUOTE_BOT",default=False) else \
-    "https://lapi.spi.nicovideo.jp/v1/tools/live/contents/{0}/quotation"
+    "https://services-eapi.spi.nicovideo.jp/v1/tools/live/contents/{0}/quotation"
 
 @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".getCurrent"))
 def getCurrent(liveId: str, session: Session) -> Optional[str]:
     url = quoteBotUri
+    nicovideo_delay()
     resp = get(url.format(liveId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
@@ -81,6 +105,7 @@ def getCurrent(liveId: str, session: Session) -> Optional[str]:
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".stop"))
 def stop(liveId: str, session: Session):
     url = quoteBotUri
+    nicovideo_delay()
     resp = delete(url.format(liveId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
@@ -94,6 +119,7 @@ def stop(liveId: str, session: Session):
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".checkNgTag"))
 def checkNgTag(videoId: str, ngTags: set) -> bool:
     url = "https://ext.nicovideo.jp/api/getthumbinfo/{0}"
+    nicovideo_delay()
     resp = get(url.format(videoId))
     resp.raise_for_status()
     videoThumbInfo = ET.fromstring(resp.text)
@@ -106,10 +132,61 @@ def boolConfig(key, default):
     return bool(AutoConfig(getcwd())(key, default))
 
 
+@retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".getThumbInfo"))
+def getThumbInfo(videoId: str) -> Dict[str, Any]:
+    url = "https://ext.nicovideo.jp/api/getthumbinfo/{0}"
+    nicovideo_delay()
+    resp = get(url.format(videoId))
+    resp.raise_for_status()
+    videoThumbInfo = ET.fromstring(resp.text)
+    error = videoThumbInfo.findtext("error")
+    if error:
+        raise ValueError("getthumbinfo error: {0}".format(error))
+
+    thumb = videoThumbInfo.find("thumb")
+    if thumb is None:
+        raise ValueError("getthumbinfo response missing thumb element")
+
+    def get_text(name: str, default: str = "") -> str:
+        element = thumb.find(name)
+        return element.text if element is not None and element.text is not None else default
+
+    def get_int(name: str) -> int:
+        try:
+            return int(get_text(name, "0"))
+        except ValueError:
+            return 0
+
+    tags = [tag.text for tag in thumb.findall("tags/tag") if tag.text]
+    length_text = get_text("length")
+    length_seconds = 0
+    if length_text:
+        parts = length_text.split(":")
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            length_seconds = int(parts[0]) * 60 + int(parts[1])
+
+    return {
+        "id": get_text("video_id"),
+        "title": get_text("title"),
+        "description": get_text("description"),
+        "thumbnail_url": get_text("thumbnail_url"),
+        "first_retrieve": get_text("first_retrieve"),
+        "length": length_text,
+        "length_seconds": length_seconds,
+        "view_counter": get_int("view_counter"),
+        "comment_num": get_int("comment_num"),
+        "mylist_counter": get_int("mylist_counter"),
+        "user_id": get_text("user_id"),
+        "user_nickname": get_text("user_nickname"),
+        "tags": tags,
+    }
+
+
 @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".getVideoInfo"))
 def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, timedelta, str]:
     # NOTE - 戻り値: (引用可能性, 動画長, 紹介メッセージ)
-    url = "https://lapi.spi.nicovideo.jp/v1/tools/live/quote/services/video/contents/{0}"
+    url = "https://services-eapi.spi.nicovideo.jp/v1/tools/live/quote/services/video/contents/{0}"
+    nicovideo_delay()
     resp = get(url.format(videoId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
@@ -127,7 +204,8 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
         quotable = boolConfig("IGNORE_QUOTABLE_CHECK", False)\
             or videoData.get("quotable", False)
     else:
-        url = "https://lapi.spi.nicovideo.jp/v1/services/select_content/video/{0}"
+        url = "https://services-eapi.spi.nicovideo.jp/v1/services/select_content/video/{0}"
+        nicovideo_delay()
         resp = get(url.format(videoId), cookies=session.cookie)
         if resp.status_code == 403:
             session.login()
@@ -165,6 +243,7 @@ def once(liveId: str, videoId: str, session: Session) -> timedelta:
         ]
     }
     sleep(1.5)
+    nicovideo_delay()
     resp = post(url.format(liveId), json=payload, cookies=session.cookie)
     if resp.status_code == 409:
         resp = patch(
@@ -201,6 +280,7 @@ def loop(liveId: str, videoId: str, session: Session):
 @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".setLoop"))
 def setLoop(liveId: str, session: Session):
     sleep(1)
+    nicovideo_delay()
     url = quoteBotUri + "/layout"
     payload = {
         "layout": layoutSettings,

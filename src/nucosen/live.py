@@ -98,7 +98,7 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
     resp = put(url, json=payload, headers=header, cookies=session.cookie)
 
     # NOTE - 調査中！
-    if resp.status_code in (400):
+    if resp.status_code == 400:
         getLogger(__name__).error(
             "現在調査中のエラーです。「Issue 141」と添えて次のエラーメッセージを開発者に報告してください。"
         )
@@ -196,11 +196,9 @@ def getStartTimeOfNextLive(now: Optional[datetime] = None) -> datetime:
         now = now.astimezone(JST)
     tomorrow = now.date() + timedelta(days=1)
     startCandidates = [
-        datetime.combine(now.date(), time(hour=4, tzinfo=JST)),
-        datetime.combine(now.date(), time(hour=10, tzinfo=JST)),
-        datetime.combine(now.date(), time(hour=16, tzinfo=JST)),
-        datetime.combine(now.date(), time(hour=22, tzinfo=JST)),
-        datetime.combine(tomorrow, time(hour=4, tzinfo=JST)),
+        datetime.combine(now.date(), time(hour=0, tzinfo=JST)),
+        datetime.combine(now.date(), time(hour=12, tzinfo=JST)),
+        datetime.combine(tomorrow, time(hour=0, tzinfo=JST)),
     ]
     for startCandidate in startCandidates:
         if startCandidate >= now:
@@ -262,7 +260,8 @@ def reserveLive(
 ) -> None:
     liveDict = generateLiveDict(title, communityId, tags)
     startTime = getStartTimeOfNextLive()
-    duration: int = config("DURATION_OVERWRITE", default=360, cast=int)
+    # Default reservation duration: 12 hours (720 minutes)
+    duration: int = config("DURATION_OVERWRITE", default=720, cast=int)
 
     response = takeReservation(liveDict, startTime, duration, session)
     responseJson: dict = response.json()

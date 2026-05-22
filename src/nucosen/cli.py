@@ -18,9 +18,20 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from logging import INFO, StreamHandler, Formatter, WARNING, root
+from pathlib import Path
 
 from nucosen import nucosen
 from nucosen.discordHandler import DiscordHandler
+
+# Load environment variables from .env if python-dotenv is installed.
+try:
+    from dotenv import load_dotenv
+
+    env_path = Path.cwd() / ".env"
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    # python-dotenv not available; continue using existing environment variables
+    pass
 
 
 def execute():
