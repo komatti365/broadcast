@@ -9,20 +9,19 @@ services:
     container_name: broadcast
     restart: unless-stopped
     env_file:
-      - /opt/selfdev/secret/broadcast.env
+      - .env
     environment:
       - NICO_COOKIE_FILE=/data/nico_cookie.json
       # Vault Agent Shared Secrets
-      - DB_KEY_FILE=/secrets/shared_api_key.txt
+      - DB_KEY_FILE=/secrets/db_key.txt
       - NICO_ID_FILE=/secrets/nico_id.txt
       - NICO_PW_FILE=/secrets/nico_pw.txt
       - NICO_TFA_FILE=/secrets/nico_tfa.txt
       - NICO_TOKEN_FILE=/secrets/nico_token.txt
     volumes:
       - broadcast_data:/data
-      - /opt/selfdev/secret:/secrets:ro
+      - ./secrets:/secrets:ro
     command: ["nucosen"]
-
 volumes:
   broadcast_data:
     driver: local
