@@ -22,6 +22,8 @@ NUCOSen Broadcastが読み取る環境変数の一覧は次の通りです。
 | BROADCASTER_VIDEOINFO_TEXT | （省略可）放送者コメントのテンプレート。{title},{id},{length},{view},{comment},{mylist},{description} が使えます |
 | QUEUE_URL | 放送待ちデータベースのURL |
 | REQUEST_URL | リクエスト受理待ちデータベースのURL |
+| SETTINGS_URL | （省略可）データベース上に保存された broadcast 設定を読み書きするための RESTDB.io コレクション URL |
+| REQUEST_URL | リクエスト受理待ちデータベースのURL |
 | QUEUE_PRELOAD_SIZE | （省略可）キューを事前登録する最大件数。省略時は10。 |
 | QUOTED_URL | （省略可）引用済み動画記録先のデータベースURL。指定すると、実施された各引用動画がこのURLに記録されます |
 | DB_KEY | （機密）データベースのアクセス鍵 |

@@ -17,6 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -35,6 +36,25 @@ def run():
 
     try:
         database = db.RestDbIo()
+        settings_keys = {
+            "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "LOGGING_DISCORD_WEBHOOK",
+            "DISCORD_VIDEOINFO_WEBHOOK", "DISCORD_ON_VIDEOINFO", "DISCORD_VIDEOINFO_TEXT",
+            "BROADCASTER_ON_VIDEOINFO", "BROADCASTER_VIDEOINFO_TEXT", "QUEUE_URL",
+            "REQUEST_URL", "QUEUE_PRELOAD_SIZE", "QUOTED_URL", "NG_TAGS",
+            "USE_OLD_VIDEO_API", "USE_OLD_QUOTE_BOT", "IGNORE_QUOTABLE_CHECK",
+            "MAINTENANCE_VIDEO_ID", "CLOSING_VIDEO_ID", "NUCOSEN_UA_PREFIX",
+            "NUCOSEN_LIVE_DESCRIPTION", "NUCOSEN_TIMESHIFT_ENABLED",
+            "NUCOSEN_USER_AD_DISABLED", "NUCOSEN_MAINTENANCE_MESSAGE",
+            "NUCOSEN_CLOSING_MESSAGE", "MIN_ALLOWABLE_DURATION",
+            "MAX_ALLOWABLE_DURATION", "NG_VIDEO_IDS", "QUOTE_MAIN",
+            "MAIN_VOLUME", "SUB_VOLUME", "SUB_SOUND_ONLY", "DURATION_OVERWRITE",
+            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE"
+        }
+        db_settings = database.get_settings()
+        for key, value in db_settings.items():
+            if key in settings_keys and value != "" and (os.environ.get(key) is None or os.environ.get(key) == ""):
+                os.environ[key] = value
+
         configLoader = AutoConfig(getcwd())
 
         def config(key, default=""):
@@ -49,6 +69,13 @@ def run():
                 return int(configLoader(key, default=default))
             except (TypeError, ValueError):
                 return default
+
+        current_settings = {
+            key: config(key, default="")
+            for key in settings_keys
+        }
+        current_settings = {key: value for key, value in current_settings.items() if value != ""}
+        database.publish_settings(current_settings)
 
         queuePreloadSize = max(1, config_int("QUEUE_PRELOAD_SIZE", 10))
 

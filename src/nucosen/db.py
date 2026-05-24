@@ -20,11 +20,11 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 from logging import getLogger
 from os import getcwd
 from re import match
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from datetime import datetime, timezone
 
 from decouple import AutoConfig
-from requests import delete, get, post
+from requests import delete, get, patch, post
 from requests.exceptions import ConnectionError as ConnError
 from requests.exceptions import HTTPError
 from retry import retry
@@ -65,6 +65,7 @@ class RestDbIo(object):
         self.__queueUrl = str(queueUrl)
         self.__requestUrl = str(requestUrl)
         self.__quotedUrl = quotedUrl
+        self.__settingsUrl = config("SETTINGS_URL", default=None)
         self.__header = header
         self.__dequeueCache: List[Dict[str, str]] = []
 
@@ -99,6 +100,48 @@ class RestDbIo(object):
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".__deleteQueueItem"))
     def __deleteQueueItem(self, itemId: str):
         resp = delete(self.__queueUrl+"/"+itemId, headers=self.__header)
+        resp.raise_for_status()
+
+    def get_settings(self) -> Dict[str, str]:
+        if self.__settingsUrl is None:
+            return {}
+
+        resp = get(self.__settingsUrl + "?q={}", headers=self.__header)
+        resp.raise_for_status()
+        documents: List[Dict[str, Any]] = resp.json()
+        if len(documents) < 1:
+            return {}
+
+        settings_doc = documents[0]
+        return {
+            key: str(value)
+            for key, value in settings_doc.items()
+            if key not in ("_id", "created", "updated") and value is not None
+        }
+
+    def _get_settings_doc(self) -> Optional[Dict[str, Any]]:
+        if self.__settingsUrl is None:
+            return None
+
+        resp = get(self.__settingsUrl + "?q={}", headers=self.__header)
+        resp.raise_for_status()
+        documents: List[Dict[str, Any]] = resp.json()
+        return documents[0] if len(documents) > 0 else None
+
+    def publish_settings(self, settings: Dict[str, str]):
+        if self.__settingsUrl is None or len(settings) < 1:
+            return
+
+        existing_doc = self._get_settings_doc()
+        if existing_doc is None:
+            resp = post(self.__settingsUrl, json=settings, headers=self.__header)
+        else:
+            doc_id = existing_doc.get("_id")
+            if not doc_id:
+                resp = post(self.__settingsUrl, json=settings, headers=self.__header)
+            else:
+                resp = patch(self.__settingsUrl + "/" + doc_id, json=settings, headers=self.__header)
+
         resp.raise_for_status()
 
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".enqueueByList"))
