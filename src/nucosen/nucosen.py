@@ -52,7 +52,7 @@ def run():
         }
         db_settings = database.get_settings()
         for key, value in db_settings.items():
-            if key in settings_keys and value != "" and (os.environ.get(key) is None or os.environ.get(key) == ""):
+            if key in settings_keys and value != "":
                 os.environ[key] = value
 
         configLoader = AutoConfig(getcwd())
@@ -370,6 +370,30 @@ def run():
                 quote.once(currentLiveId, nextVideoId, session)
                 database.recordQuotedVideo(nextVideoId, currentLiveId)
                 live.showMessage(currentLiveId, videoInfo[2], session)
+
+                try:
+                    latest_settings = database.get_settings()
+                    updated_keys = []
+                    for key, value in latest_settings.items():
+                        if key in settings_keys and value != "":
+                            old_val = os.environ.get(key, "")
+                            if old_val != value:
+                                os.environ[key] = value
+                                updated_keys.append(f"{key}: {old_val} -> {value}")
+                    if updated_keys:
+                        update_msg = "DB設定が更新され、環境変数に反映されました:\n" + "\n".join(updated_keys)
+                        logger.info(update_msg)
+                        webhook = config("LOGGING_DISCORD_WEBHOOK", default="")
+                        if webhook:
+                            try:
+                                _send_discord_notification(webhook, update_msg)
+                            except Exception as e:
+                                logger.warning("設定更新のDiscord通知に失敗しました: %s", e)
+                    else:
+                        logger.debug("DB設定の再確認が完了しました (変更なし)")
+                except Exception as err:
+                    logger.warning("DB設定の再確認に失敗しました: %s", err)
+
                 clock.waitUntil(datetime.now(timezone.utc) + videoInfo[1])
                 logger.info("引用終了見込み時刻になりました")
             logger.info("放送が終了しました: {0}".format(currentLiveId))
