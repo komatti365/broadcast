@@ -129,11 +129,13 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
                 default='<font size="+1">NUCOSenへようこそ！</font>',
             )
         )
-        + "<br /><br />========== Powered by NUCOSen =========="
+        + "<br /><br />========== Powered by STSen =========="
         + "<br />この生放送はBotにより自動的に配信されています。<br />"
         + "配信システムのソースコードは "
-        + "https://github.com/nucosen/broadcast"
+        + "https://github.com/komatti365/broadcast"
         + " で入手できます<br />"
+        + "尚、私が改変する前のソースコードはこちらで公開されています。"
+        + " https://github.com/nucosen/broadcast by sitting-cat <br />"
         + "=======================================",
         "category": "動画紹介",
         "tags": tagDicts,
@@ -148,11 +150,10 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
             True if not config("NUCOSEN_USER_AD_DISABLED", default=False) else False
         ),
         "isAutoCommentFilterEnabled": False,
-        "maxQuality": "1Mbps450p",
+        "maxQuality": "6Mbps720p",
         "rightsItems": [],
-        "isQuotable": False,
         "isCppLinkable": False,
-        "isCppAutoRegistration": False,
+        "isCppAutoRegistration": False
     }
 
 
