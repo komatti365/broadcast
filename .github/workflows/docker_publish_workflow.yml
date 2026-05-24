@@ -18,12 +18,13 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/my-app
+          images: ghcr.io/${{ github.repository }}/nucosen
           # 【ここを追加】生成されるすべてのタグの末尾に「-stable」を付与します
           flavor: |
             suffix=-stable
           tags: |
             type=semver,pattern={{version}}
+            type=raw,value=latest
             type=sha,format=long
 
       - name: Login to GHCR
