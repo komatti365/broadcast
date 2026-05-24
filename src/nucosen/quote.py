@@ -73,11 +73,11 @@ sourceList = (
 layoutSettings = {
     "main": {
         "source": sourceList[0],
-        "volume": float(config("MAIN_VOLUME", default=0.5))
+        "volume": floatConfig("MAIN_VOLUME", 0.5)
     },
     "sub": {
         "source": sourceList[1],
-        "volume": float(config("SUB_VOLUME", default=0.5)),
+        "volume": floatConfig("SUB_VOLUME", 0.5),
         "isSoundOnly": boolConfig("SUB_SOUND_ONLY", False)
     }
 }
