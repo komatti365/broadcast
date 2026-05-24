@@ -139,3 +139,6 @@ private/
 .config/
 config/
 test.py
+
+#hidedocs
+oauth_api.md
