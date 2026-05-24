@@ -151,6 +151,8 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
         "maxQuality": "1Mbps450p",
         "rightsItems": [],
         "isQuotable": False,
+        "isCppLinkable": False,
+        "isCppAutoRegistration": False,
     }
 
 
