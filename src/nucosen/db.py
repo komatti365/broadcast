@@ -109,40 +109,32 @@ class RestDbIo(object):
         resp = get(self.__settingsUrl + "?q={}", headers=self.__header)
         resp.raise_for_status()
         documents: List[Dict[str, Any]] = resp.json()
-        if len(documents) < 1:
-            return {}
-
-        settings_doc = documents[0]
-        return {
-            key: str(value)
-            for key, value in settings_doc.items()
-            if key not in ("_id", "created", "updated") and value is not None
-        }
-
-    def _get_settings_doc(self) -> Optional[Dict[str, Any]]:
-        if self.__settingsUrl is None:
-            return None
-
-        resp = get(self.__settingsUrl + "?q={}", headers=self.__header)
-        resp.raise_for_status()
-        documents: List[Dict[str, Any]] = resp.json()
-        return documents[0] if len(documents) > 0 else None
+        
+        settings = {}
+        for doc in documents:
+            if "key" in doc and "value" in doc and doc["value"] is not None:
+                settings[doc["key"]] = str(doc["value"])
+        return settings
 
     def publish_settings(self, settings: Dict[str, str]):
         if self.__settingsUrl is None or len(settings) < 1:
             return
 
-        existing_doc = self._get_settings_doc()
-        if existing_doc is None:
-            resp = post(self.__settingsUrl, json=settings, headers=self.__header)
-        else:
-            doc_id = existing_doc.get("_id")
-            if not doc_id:
-                resp = post(self.__settingsUrl, json=settings, headers=self.__header)
-            else:
-                resp = patch(self.__settingsUrl + "/" + doc_id, json=settings, headers=self.__header)
-
+        resp = get(self.__settingsUrl + "?q={}", headers=self.__header)
         resp.raise_for_status()
+        documents: List[Dict[str, Any]] = resp.json()
+        
+        existing_map = {doc["key"]: doc["_id"] for doc in documents if "key" in doc}
+        
+        for k, v in settings.items():
+            payload = {"key": k, "value": str(v)}
+            if k in existing_map:
+                doc_id = existing_map[k]
+                patch_resp = patch(self.__settingsUrl + "/" + str(doc_id), json=payload, headers=self.__header)
+                patch_resp.raise_for_status()
+            else:
+                post_resp = post(self.__settingsUrl, json=payload, headers=self.__header)
+                post_resp.raise_for_status()
 
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".enqueueByList"))
     def enqueueByList(self, items: Iterable[str]):
