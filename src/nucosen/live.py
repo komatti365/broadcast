@@ -28,7 +28,7 @@ from requests.exceptions import HTTPError
 from requests.models import Response
 from retry import retry
 
-from nucosen.sessionCookie import Session, ReLoginRequested
+from nucosen.sessionCookie import Session
 from decouple import AutoConfig
 from os import getcwd
 
@@ -43,7 +43,7 @@ class ReLoggedIn(Exception):
 
 config = AutoConfig(getcwd())
 
-NetworkErrors = (HTTPError, ConnError, ReLoggedIn, ReLoginRequested)
+NetworkErrors = (HTTPError, ConnError, ReLoggedIn)
 UserAgent = str(config("NUCOSEN_UA_PREFIX", default="anonymous")) + " / NUCOSen Backend"
 
 
@@ -54,7 +54,6 @@ def getLives(session: Session) -> Tuple[Optional[str], Optional[str]]:
     # NOTE - 戻り値 : (オンエア枠, 次枠)
     if session.cookie is None:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L00)")
         raise ReLoggedIn("L00 ログインセッション更新")
     url = "https://live2.nicovideo.jp/unama/tool/v2/onairs/user"
     header = {
@@ -64,7 +63,6 @@ def getLives(session: Session) -> Tuple[Optional[str], Optional[str]]:
     resp = get(url, headers=header)
     if resp.status_code == 401:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L01)")
         raise ReLoggedIn("L01 ログインセッション更新")
     resp.raise_for_status()
     result = dict(resp.json()).get("data", {})
@@ -108,7 +106,6 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
 
     if resp.status_code in (403, 401):
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L02)")
         raise ReLoggedIn("L02 ログインセッション更新")
     resp.raise_for_status()
 
@@ -182,7 +179,6 @@ def takeReservation(
 
     if response.status_code == 401:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L03)")
         raise ReLoggedIn("L03 ログインセッション更新")
     if (
         response.status_code == 400
@@ -297,7 +293,6 @@ def getStartTime(liveId: str, session: Session) -> datetime:
     response = get(url, cookies=session.cookie)
     if response.status_code == 401:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L04)")
         raise ReLoggedIn("L04 ログインセッション更新")
     response.raise_for_status()
     result = response.json()
@@ -310,7 +305,6 @@ def getEndTime(liveId: str, session: Session) -> datetime:
     response = get(url, cookies=session.cookie)
     if response.status_code == 401:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L05)")
         raise ReLoggedIn("L05 ログインセッション更新")
     if response.status_code == 404:
         return datetime.now(timezone.utc)

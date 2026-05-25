@@ -30,7 +30,7 @@ from requests.exceptions import ConnectionError as ConnError
 from requests.exceptions import HTTPError
 from retry import retry
 
-from nucosen.sessionCookie import Session, ReLoginRequested
+from nucosen.sessionCookie import Session
 
 from defusedxml import ElementTree as ET
 
@@ -44,7 +44,7 @@ class RetryRequired(Exception):
 
 
 config = AutoConfig(getcwd())
-NetworkErrors = (HTTPError, ConnError, ReLoggedIn, RetryRequired, ReLoginRequested)
+NetworkErrors = (HTTPError, ConnError, ReLoggedIn, RetryRequired)
 
 def boolConfig(key, default=False):
     value = config(key, default=default)
@@ -93,7 +93,6 @@ def getCurrent(liveId: str, session: Session) -> Optional[str]:
     resp = get(url.format(liveId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L10)")
         raise ReLoggedIn("L10 ログインセッション更新")
     if resp.status_code == 404:
         return None
@@ -110,7 +109,6 @@ def stop(liveId: str, session: Session):
     resp = delete(url.format(liveId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L11)")
         raise ReLoggedIn("L11 ログインセッション更新")
     if resp.status_code == 404:
         getLogger(__name__).info("停止すべき引用が存在しませんでした。")
@@ -192,7 +190,6 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
     resp = get(url.format(videoId), cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L12)")
         raise ReLoggedIn("L12 ログインセッション更新")
     if resp.status_code == 500:
         return (False, timedelta(seconds=0), "ERROR")
@@ -212,7 +209,6 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
         resp = get(url.format(videoId), cookies=session.cookie)
         if resp.status_code == 403:
             session.login()
-            getLogger(__name__).warning("再ログインに成功しました (L15)")
             raise ReLoggedIn("L15 ログインセッション更新")
         if resp.status_code == 500:
             return (False, timedelta(seconds=0), "ERROR")
@@ -257,7 +253,6 @@ def once(liveId: str, videoId: str, session: Session) -> timedelta:
         )
     if resp.status_code == 403:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L13)")
         raise ReLoggedIn("L13 ログインセッション更新")
 
     if resp.status_code == 400:
@@ -294,6 +289,5 @@ def setLoop(liveId: str, session: Session):
     resp = patch(url.format(liveId), json=payload, cookies=session.cookie)
     if resp.status_code == 403:
         session.login()
-        getLogger(__name__).warning("再ログインに成功しました (L14)")
         raise ReLoggedIn("L14 ログインセッション更新")
     resp.raise_for_status()
