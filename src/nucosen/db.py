@@ -227,7 +227,7 @@ class RestDbIo(object):
         
         try:
             # 常に最新の1件にするため、既存の情報を全クリア
-            delete_resp = delete(self.__nowplayingUrl + "/*", headers=self.__header)
+            delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
             delete_resp.raise_for_status()
             
             payload = {
@@ -268,7 +268,7 @@ class RestDbIo(object):
             return False
         
         try:
-            delete_resp = delete(self.__nowplayingUrl + "/*", headers=self.__header)
+            delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
             delete_resp.raise_for_status()
             return True
         except Exception as e:
