@@ -45,7 +45,8 @@ def run():
             "MAINTENANCE_VIDEO_ID", "CLOSING_VIDEO_ID", "NUCOSEN_UA_PREFIX",
             "NUCOSEN_LIVE_DESCRIPTION", "NUCOSEN_TIMESHIFT_ENABLED",
             "NUCOSEN_USER_AD_DISABLED", "NUCOSEN_MAINTENANCE_MESSAGE",
-            "NUCOSEN_CLOSING_MESSAGE", "MIN_ALLOWABLE_DURATION",
+            "NUCOSEN_CLOSING_MESSAGE", "OPENING_VIDEO_ID", "NUCOSEN_OPENING_MESSAGE",
+            "MIN_ALLOWABLE_DURATION",
             "MAX_ALLOWABLE_DURATION", "NG_VIDEO_IDS", "QUOTE_MAIN",
             "MAIN_VOLUME", "SUB_VOLUME", "SUB_SOUND_ONLY", "DURATION_OVERWRITE",
             "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE", "NOWPLAYING_URL"
@@ -170,6 +171,7 @@ def run():
         logger.debug("チャンネルループ開始")
 
         ngTags = set(config("NG_TAGS").split(","))
+        is_fresh_frame = False
 
         while True:
             logger.debug("現枠・次枠の確保開始")
@@ -230,6 +232,7 @@ def run():
                             "次枠が未予約のため、自動枠取りは行いません。現在の枠終了まで待機します。"
                         )
                         clock.waitUntil(currentLiveEnd)
+                        is_fresh_frame = True
                     else:
                         nextLiveBegin = live.getStartTime(liveIDs[1], session)
                         clock.waitUntil(currentLiveEnd)
@@ -246,6 +249,7 @@ def run():
                             )
                         database.clearNowPlaying()
                         clock.waitUntil(nextLiveBegin)
+                        is_fresh_frame = True
                         liveIDs = live.getLives(session)
                 else:
                     logger.info("一般動画の引用を検知しました: {0}".format(currentQuote))
@@ -266,6 +270,8 @@ def run():
 
             currentLiveId = liveIDs[0]
             logger.info("放送の準備が整いました: {0}".format(currentLiveId))
+            is_first_video = (currentQuote is None) and is_fresh_frame
+            is_fresh_frame = False
             while True:
 
                 def ensure_preloaded_queue():
@@ -296,38 +302,42 @@ def run():
                         logger.info("事前キューが目標数に達しませんでした: %d 件不足", missing)
 
                 is_requested = False
-                db_requests = database.getAndResetRequests()
-                if db_requests is not None:
-                    winners = personality.choiceFromRequests(db_requests, 5)
-                    if winners is None:
-                        logger.error("E40 抽選アボート {0}".format(db_requests))
-                        selection = personality.randomSelection(
-                            config("REQTAGS").split(","), session, ngTags)
-                    else:
-                        selection = winners.pop()
-                        database.enqueueByList(winners)
-                        is_requested = True
-                    nextVideoId = selection
+                is_opening = is_first_video
+                if is_first_video and config("OPENING_VIDEO_ID"):
+                    nextVideoId = config("OPENING_VIDEO_ID")
                 else:
-                    ensure_preloaded_queue()
-                    nextVideoId = database.dequeue()
-                    if nextVideoId is None:
-                        logger.debug("キューが空なので補充を行います")
-                        request_ids = database.getAndResetRequests()
-                        if request_ids is not None:
-                            winners = personality.choiceFromRequests(request_ids, 5)
-                            if winners is None:
-                                logger.error("E40 抽選アボート {0}".format(request_ids))
-                                selection = personality.randomSelection(
-                                    config("REQTAGS").split(","), session, ngTags)
-                            else:
-                                selection = winners.pop()
-                                database.enqueueByList(winners)
-                                is_requested = True
-                        else:
+                    db_requests = database.getAndResetRequests()
+                    if db_requests is not None:
+                        winners = personality.choiceFromRequests(db_requests, 5)
+                        if winners is None:
+                            logger.error("E40 抽選アボート {0}".format(db_requests))
                             selection = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags)
+                        else:
+                            selection = winners.pop()
+                            database.enqueueByList(winners)
+                            is_requested = True
                         nextVideoId = selection
+                    else:
+                        ensure_preloaded_queue()
+                        nextVideoId = database.dequeue()
+                        if nextVideoId is None:
+                            logger.debug("キューが空なので補充を行います")
+                            request_ids = database.getAndResetRequests()
+                            if request_ids is not None:
+                                winners = personality.choiceFromRequests(request_ids, 5)
+                                if winners is None:
+                                    logger.error("E40 抽選アボート {0}".format(request_ids))
+                                    selection = personality.randomSelection(
+                                        config("REQTAGS").split(","), session, ngTags)
+                                else:
+                                    selection = winners.pop()
+                                    database.enqueueByList(winners)
+                                    is_requested = True
+                            else:
+                                selection = personality.randomSelection(
+                                    config("REQTAGS").split(","), session, ngTags)
+                            nextVideoId = selection
 
                 logger.info("引用を開始します: {0}".format(nextVideoId))
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
@@ -395,6 +405,11 @@ def run():
                 duration_seconds = int(videoInfo[1].total_seconds())
                 nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
                 live.showMessage(currentLiveId, videoInfo[2], session)
+
+                if is_opening and config("NUCOSEN_OPENING_MESSAGE"):
+                    live.showMessage(currentLiveId, config("NUCOSEN_OPENING_MESSAGE"), session)
+                
+                is_first_video = False
 
                 try:
                     latest_settings = database.get_settings()
