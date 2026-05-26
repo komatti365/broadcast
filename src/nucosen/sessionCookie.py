@@ -65,7 +65,7 @@ class Session(object):
             allow_redirects=False
         )
         resp.raise_for_status()
-        if "user_session" in resp.cookies:
+        if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
             self.cookie = resp.cookies
             getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
             self._auto_save_cookie()
@@ -78,6 +78,9 @@ class Session(object):
 
     def __mfa_login(self, resp: Response, header):
         tfac = TOTP(self.mfa_token)
+        current_cookies = RequestsCookieJar()
+        current_cookies.update(resp.cookies)
+
         mfaResp = post(
             resp.headers["Location"],
             {
@@ -85,19 +88,23 @@ class Session(object):
                 "is_mfa_trusted_device": "false",
             },
             headers=header,
-            cookies=resp.cookies,
+            cookies=current_cookies,
             allow_redirects=False,
         )
         mfaResp.raise_for_status()
-        resp = get(
+        current_cookies.update(mfaResp.cookies)
+        
+        final_resp = get(
             mfaResp.headers["Location"],
             headers={"User-Agent": self.user_agent},
-            cookies=resp.cookies,
+            cookies=current_cookies,
             allow_redirects=False
         )
-        resp.raise_for_status()
-        if "user_session" in resp.cookies:
-            self.cookie = resp.cookies
+        final_resp.raise_for_status()
+        current_cookies.update(final_resp.cookies)
+
+        if "user_session" in current_cookies and current_cookies.get("user_session") not in ("deleted", ""):
+            self.cookie = current_cookies
             getLogger(__name__).info("ユーザー名/パスワード（MFA付き）によるログイン成功")
             self._auto_save_cookie()
             return
