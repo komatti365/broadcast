@@ -128,10 +128,6 @@ def checkNgTag(videoId: str, ngTags: set) -> bool:
     return True if len(ngTags & tags) == 0 else False
 
 
-def boolConfig(key, default):
-    return bool(AutoConfig(getcwd())(key, default))
-
-
 @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".getThumbInfo"))
 def getThumbInfo(videoId: str) -> Dict[str, Any]:
     url = "https://ext.nicovideo.jp/api/getthumbinfo/{0}"
