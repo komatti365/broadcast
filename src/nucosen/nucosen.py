@@ -48,7 +48,7 @@ def run():
             "NUCOSEN_CLOSING_MESSAGE", "MIN_ALLOWABLE_DURATION",
             "MAX_ALLOWABLE_DURATION", "NG_VIDEO_IDS", "QUOTE_MAIN",
             "MAIN_VOLUME", "SUB_VOLUME", "SUB_SOUND_ONLY", "DURATION_OVERWRITE",
-            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE"
+            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE", "NOWPLAYING_URL"
         }
         db_settings = database.get_settings()
         for key, value in db_settings.items():
@@ -222,6 +222,7 @@ def run():
                     quote.stop(liveIDs[0], session)
                     quote.once(
                         liveIDs[0], SPECIFIC_VIDEO_IDS[MAINTENANCE], session)
+                    database.clearNowPlaying()
                 elif currentQuote == SPECIFIC_VIDEO_IDS[CLOSING]:
                     logger.info("エンディング動画の引用を検知しました")
                     if liveIDs[1] is None:
@@ -243,6 +244,7 @@ def run():
                             logger.info(
                                 "自動枠取りは無効です。次枠は手動で予約してください。"
                             )
+                        database.clearNowPlaying()
                         clock.waitUntil(nextLiveBegin)
                         liveIDs = live.getLives(session)
                 else:
@@ -257,6 +259,7 @@ def run():
                         str(config("NUCOSEN_MAINTENANCE_MESSAGE"))\
                         or "システムが異常停止したため、自動回復機能により復旧しました。\n" +\
                         "ご迷惑をおかけし大変申し訳ございません。まもなく再開いたします。"
+                    database.clearNowPlaying()
                     live.showMessage(
                         liveIDs[0], emergencyStopMessage, session)
                     clock.waitUntil(maintenanceEnd)
@@ -379,6 +382,7 @@ def run():
                     database.priorityEnqueue(nextVideoId)
                     quote.loop(
                         currentLiveId, SPECIFIC_VIDEO_IDS[CLOSING], session)
+                    database.clearNowPlaying()
                     live.showMessage(
                         currentLiveId,
                         config("NUCOSEN_CLOSING_MESSAGE") or
@@ -413,8 +417,22 @@ def run():
                 except Exception as err:
                     logger.warning("DB設定の再確認に失敗しました: %s", err)
 
-                clock.waitUntil(datetime.now(timezone.utc) + videoInfo[1])
+                # 引用終了まで一気に待機せず、最大10秒刻みで残り時間をDBに更新し続ける
+                target_end_time = datetime.now(timezone.utc) + videoInfo[1]
+                while True:
+                    now = datetime.now(timezone.utc)
+                    if now >= target_end_time:
+                        break
+                    
+                    remaining_seconds = int((target_end_time - now).total_seconds())
+                    if nowplaying_doc_id:
+                        database.patchNowPlayingTime(nowplaying_doc_id, remaining_seconds)
+                        
+                    sleep_duration = min(10.0, (target_end_time - now).total_seconds())
+                    clock.waitUntil(now + timedelta(seconds=sleep_duration))
+
                 logger.info("引用終了見込み時刻になりました")
+                database.clearNowPlaying()
             logger.info("放送が終了しました: {0}".format(currentLiveId))
     except Exception:
         t = format_exc()

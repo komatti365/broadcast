@@ -66,6 +66,7 @@ class RestDbIo(object):
         self.__requestUrl = str(requestUrl)
         self.__quotedUrl = quotedUrl
         self.__settingsUrl = config("SETTINGS_URL", default=None)
+        self.__nowplayingUrl = config("NOWPLAYING_URL", default=None)
         self.__header = header
         self.__dequeueCache: List[Dict[str, str]] = []
 
@@ -217,4 +218,59 @@ class RestDbIo(object):
             return True
         except Exception as e:
             getLogger(__name__).error("引用済み動画の記録に失敗しました: {0}".format(e))
+            return False
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".updateNowPlaying"))
+    def updateNowPlaying(self, videoId: str, title: str, duration: int = 0) -> Optional[str]:
+        if self.__nowplayingUrl is None:
+            return None
+        
+        try:
+            # 常に最新の1件にするため、既存の情報を全クリア
+            delete_resp = delete(self.__nowplayingUrl + "/*", headers=self.__header)
+            delete_resp.raise_for_status()
+            
+            payload = {
+                "videoId": videoId,
+                "title": title,
+                "duration": duration,
+                "remainingTime": duration
+            }
+            post_resp = post(self.__nowplayingUrl, json=payload, headers=self.__header)
+            post_resp.raise_for_status()
+            
+            data = post_resp.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get("_id")
+            elif isinstance(data, dict):
+                return data.get("_id")
+            return None
+        except Exception as e:
+            getLogger(__name__).error("nowplayingの更新に失敗しました: {0}".format(e))
+            return None
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".patchNowPlayingTime"))
+    def patchNowPlayingTime(self, doc_id: str, remainingTime: int) -> bool:
+        if self.__nowplayingUrl is None or not doc_id:
+            return False
+            
+        try:
+            patch_resp = patch(self.__nowplayingUrl + "/" + str(doc_id), json={"remainingTime": remainingTime}, headers=self.__header)
+            patch_resp.raise_for_status()
+            return True
+        except Exception as e:
+            getLogger(__name__).error("nowplayingの残り時間更新に失敗しました: {0}".format(e))
+            return False
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".clearNowPlaying"))
+    def clearNowPlaying(self) -> bool:
+        if self.__nowplayingUrl is None:
+            return False
+        
+        try:
+            delete_resp = delete(self.__nowplayingUrl + "/*", headers=self.__header)
+            delete_resp.raise_for_status()
+            return True
+        except Exception as e:
+            getLogger(__name__).error("nowplayingのクリアに失敗しました: {0}".format(e))
             return False
