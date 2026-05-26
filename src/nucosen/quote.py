@@ -91,7 +91,7 @@ def getCurrent(liveId: str, session: Session) -> Optional[str]:
     url = quoteBotUri
     nicovideo_delay()
     resp = get(url.format(liveId), cookies=session.cookie)
-    if resp.status_code == 403:
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L10 ログインセッション更新")
     if resp.status_code == 404:
@@ -107,7 +107,7 @@ def stop(liveId: str, session: Session):
     url = quoteBotUri
     nicovideo_delay()
     resp = delete(url.format(liveId), cookies=session.cookie)
-    if resp.status_code == 403:
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L11 ログインセッション更新")
     if resp.status_code == 404:
@@ -188,7 +188,7 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
     url = "https://services-eapi.spi.nicovideo.jp/v1/tools/live/quote/services/video/contents/{0}"
     nicovideo_delay()
     resp = get(url.format(videoId), cookies=session.cookie)
-    if resp.status_code == 403:
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L12 ログインセッション更新")
     if resp.status_code == 500:
@@ -207,7 +207,7 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
         url = "https://services-eapi.spi.nicovideo.jp/v1/services/select_content/video/{0}"
         nicovideo_delay()
         resp = get(url.format(videoId), cookies=session.cookie)
-        if resp.status_code == 403:
+        if resp.status_code == 401:
             session.login()
             raise ReLoggedIn("L15 ログインセッション更新")
         if resp.status_code == 500:
@@ -251,7 +251,7 @@ def once(liveId: str, videoId: str, session: Session) -> timedelta:
             json={"contents": [{"id": videoId, "type": "video"}]},
             cookies=session.cookie
         )
-    if resp.status_code == 403:
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L13 ログインセッション更新")
 
@@ -287,7 +287,7 @@ def setLoop(liveId: str, session: Session):
         "repeat": True
     }
     resp = patch(url.format(liveId), json=payload, cookies=session.cookie)
-    if resp.status_code == 403:
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L14 ログインセッション更新")
     resp.raise_for_status()

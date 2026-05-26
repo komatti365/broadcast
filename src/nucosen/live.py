@@ -104,7 +104,7 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
         )
         getLogger(__name__).error(resp.text)
 
-    if resp.status_code in (403, 401):
+    if resp.status_code == 401:
         session.login()
         raise ReLoggedIn("L02 ログインセッション更新")
     resp.raise_for_status()
