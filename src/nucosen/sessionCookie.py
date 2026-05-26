@@ -120,14 +120,14 @@ class Session(object):
         return self.cookie["user_session"]
 
     @classmethod
-    def from_access_token(cls, access_token: str, user_agent: str = UserAgent):
+    def from_access_token(cls, access_token: str, mail_tel: str = "", password: str = "", mfa_token: str = "", user_agent: str = UserAgent):
         """Create a Session using an existing `user_session` access token.
 
         This avoids performing a login with username/password and MFA.
         The provided token is placed into a RequestsCookieJar so existing
         code that relies on `session.cookie` continues to work.
         """
-        session = cls("", "", "", user_agent=user_agent)
+        session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
         jar = RequestsCookieJar()
         jar.set("user_session", access_token, domain=".nicovideo.jp", path="/")
         session.cookie = jar
@@ -150,7 +150,7 @@ class Session(object):
         getLogger(__name__).info(f"クッキーを保存しました: {path}")
 
     @classmethod
-    def from_cookie_file(cls, path: str, user_agent: str = UserAgent):
+    def from_cookie_file(cls, path: str, mail_tel: str = "", password: str = "", mfa_token: str = "", user_agent: str = UserAgent):
         """Create a Session loading cookies from a JSON file saved by `save_cookies`.
 
         If the file contains name->value mapping, cookies are created with a
@@ -171,7 +171,7 @@ class Session(object):
         jar = RequestsCookieJar()
         for name, value in data.items():
             jar.set(name, value, domain=".nicovideo.jp", path="/")
-        session = cls("", "", "", user_agent=user_agent)
+        session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
         return session

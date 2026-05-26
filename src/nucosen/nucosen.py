@@ -132,17 +132,18 @@ def run():
         def _get_login_info():
             return get_secret("NICO_ID"), get_secret("NICO_PW"), get_secret("NICO_TFA")
 
+        logininfo = _get_login_info()
+
         if token:
-            session = sessionCookie.Session.from_access_token(token)
+            session = sessionCookie.Session.from_access_token(token, *logininfo)
         elif cookie_file:
             p = Path(cookie_file)
             if p.exists():
                 try:
-                    session = sessionCookie.Session.from_cookie_file(cookie_file)
+                    session = sessionCookie.Session.from_cookie_file(cookie_file, *logininfo)
                 except (ValueError, FileNotFoundError) as e:
                     logger.warning(f"クッキーファイルが無効です: {e}")
                     logger.info("ユーザー名/パスワードで再度ログインします")
-                    logininfo = _get_login_info()
                     if "" in logininfo:
                         getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
                         raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
@@ -155,14 +156,12 @@ def run():
                         getLogger(__name__).warning("クッキーの保存に失敗しました")
             else:
                 logger.debug(f"クッキーファイルが指定されていますが存在しません: {cookie_file}")
-                logininfo = _get_login_info()
                 if "" in logininfo:
                     getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
                     raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
                 session = sessionCookie.Session(*logininfo)
                 session.login()
         else:
-            logininfo = _get_login_info()
             if "" in logininfo:
                 getLogger(__name__).info("現在のログイン情報: {0}".format(str(logininfo)))
                 raise Exception("V00 ログイン情報が不十分です。現在の情報はinfoに出力済み。")
