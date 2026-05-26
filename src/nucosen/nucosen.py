@@ -292,6 +292,7 @@ def run():
                     if missing > 0:
                         logger.info("事前キューが目標数に達しませんでした: %d 件不足", missing)
 
+                is_requested = False
                 db_requests = database.getAndResetRequests()
                 if db_requests is not None:
                     winners = personality.choiceFromRequests(db_requests, 5)
@@ -302,6 +303,7 @@ def run():
                     else:
                         selection = winners.pop()
                         database.enqueueByList(winners)
+                        is_requested = True
                     nextVideoId = selection
                 else:
                     ensure_preloaded_queue()
@@ -318,6 +320,7 @@ def run():
                             else:
                                 selection = winners.pop()
                                 database.enqueueByList(winners)
+                                is_requested = True
                         else:
                             selection = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags)
@@ -327,8 +330,25 @@ def run():
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
                 videoInfo = quote.getVideoInfo(nextVideoId, session, ngTags)
                 if videoInfo[0] is False:
-                    raise Exception("V20 引用不能エラー {0} {1}".format(
-                        nextVideoId, currentLiveId))
+                    logger.warning("V20 引用不能エラーのためスキップします: {0} {1}".format(nextVideoId, currentLiveId))
+
+                    if is_requested:
+                        reject_msg_nico = "リクエスト動画({0})は引用不可のためスキップしました。".format(nextVideoId)
+                        reject_msg_discord = "⚠️ リクエストスキップ: 動画 `{0}` は引用不許可またはNGタグが含まれているためスキップされました。".format(nextVideoId)
+
+                        try:
+                            live.showMessage(currentLiveId, reject_msg_nico, session)
+                        except Exception as err:
+                            logger.warning("スキップ通知のニコ生コメント送信に失敗しました: %s", err)
+
+                        webhook = config("DISCORD_VIDEOINFO_WEBHOOK", default="") or config("LOGGING_DISCORD_WEBHOOK", default="")
+                        if webhook:
+                            try:
+                                _send_discord_notification(webhook, reject_msg_discord)
+                            except Exception as err:
+                                logger.warning("スキップ通知のDiscord送信に失敗しました: %s", err)
+
+                    continue
                 if config_bool("DISCORD_ON_VIDEOINFO", default=False):
                     webhook = config("DISCORD_VIDEOINFO_WEBHOOK", default="") or config("LOGGING_DISCORD_WEBHOOK", default="")
                     if webhook:
