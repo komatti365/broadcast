@@ -392,6 +392,8 @@ def run():
                     break
                 quote.once(currentLiveId, nextVideoId, session)
                 database.recordQuotedVideo(nextVideoId, currentLiveId)
+                duration_seconds = int(videoInfo[1].total_seconds())
+                nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
                 live.showMessage(currentLiveId, videoInfo[2], session)
 
                 try:
