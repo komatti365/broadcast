@@ -214,6 +214,12 @@ def run():
                 nextLiveBegin = live.getStartTime(nextLive, session)
                 clock.waitUntil(nextLiveBegin)
                 is_fresh_frame = True
+                for _ in range(6):
+                    liveIDs = live.getLives(session)
+                    if liveIDs[0] is not None:
+                        break
+                    logger.info("現枠の開始を待機しています。10秒後に再試行します。")
+                    clock.waitUntil(datetime.now(timezone.utc) + timedelta(seconds=10))
                 liveIDs = live.getLives(session)
             elif liveIDs[1] is None:
                 if autoReserveEnabled:
