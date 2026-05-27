@@ -145,7 +145,7 @@ def run():
                 except (ValueError, FileNotFoundError) as e:
                     logger.warning(f"クッキーファイルが無効です: {e}")
                     logger.info("ユーザー名/パスワードで再度ログインします")
-                    if "" in logininfo:
+                    if "" in logininfo[:2]:
                         getLogger(__name__).info(
                             "現在のログイン情報: NICO_ID設定済み=%s, NICO_PW設定済み=%s, NICO_TFA設定済み=%s",
                             bool(logininfo[0]),
@@ -162,7 +162,7 @@ def run():
                         getLogger(__name__).warning("クッキーの保存に失敗しました")
             else:
                 logger.debug(f"クッキーファイルが指定されていますが存在しません: {cookie_file}")
-                if "" in logininfo:
+                if "" in logininfo[:2]:
                     getLogger(__name__).info(
                         "現在のログイン情報: NICO_ID設定済み=%s, NICO_PW設定済み=%s, NICO_TFA設定済み=%s",
                         bool(logininfo[0]),
@@ -173,7 +173,7 @@ def run():
                 session = sessionCookie.Session(*logininfo)
                 session.login()
         else:
-            if "" in logininfo:
+            if "" in logininfo[:2]:
                 getLogger(__name__).info(
                     "現在のログイン情報: NICO_ID設定済み=%s, NICO_PW設定済み=%s, NICO_TFA設定済み=%s",
                     bool(logininfo[0]),
