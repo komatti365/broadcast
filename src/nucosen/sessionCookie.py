@@ -77,6 +77,16 @@ class Session(object):
         raise ReLoginRequested("L15 ログイン失敗")
 
     def __mfa_login(self, resp: Response, header):
+        if not self.mfa_token:
+            getLogger(__name__).error("ニコニコ動画で2段階認証が要求されましたが、NICO_TFA (MFAトークン) が設定されていません。")
+            raise ReLoginRequested("V40 MFA失敗 (トークン未設定)")
+        try:
+            import base64
+            # pyotpのデコード処理と同様に、スペースを除去した上でBase32としてデコード可能か検証します
+            base64.b32decode(self.mfa_token.replace(" ", ""), casefold=True)
+        except Exception as e:
+            getLogger(__name__).error(f"MFAトークン (NICO_TFA) のデコードに失敗しました。Base32形式が正しいか確認してください: {e}")
+            raise ReLoginRequested("V40 MFA失敗 (トークン不正)")
         tfac = TOTP(self.mfa_token)
         current_cookies = RequestsCookieJar()
         current_cookies.update(resp.cookies)
