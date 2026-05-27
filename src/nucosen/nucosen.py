@@ -287,7 +287,7 @@ def run():
                     max_attempts = 5
                     while missing > 0 and max_attempts > 0:
                         try:
-                            selection = personality.randomSelection(
+                            selection, selected_tag = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags)
                             database.enqueueByList([selection])
                             current_queue_count = database.getQueueCount()
@@ -311,7 +311,7 @@ def run():
                         winners = personality.choiceFromRequests(db_requests, 5)
                         if winners is None:
                             logger.error("E40 抽選アボート {0}".format(db_requests))
-                            selection = personality.randomSelection(
+                            selection, selected_tag = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags)
                         else:
                             selection = winners.pop()
@@ -328,14 +328,14 @@ def run():
                                 winners = personality.choiceFromRequests(request_ids, 5)
                                 if winners is None:
                                     logger.error("E40 抽選アボート {0}".format(request_ids))
-                                    selection = personality.randomSelection(
+                                    selection, selected_tag = personality.randomSelection(
                                         config("REQTAGS").split(","), session, ngTags)
                                 else:
                                     selection = winners.pop()
                                     database.enqueueByList(winners)
                                     is_requested = True
                             else:
-                                selection = personality.randomSelection(
+                                selection, selected_tag = personality.randomSelection(
                                     config("REQTAGS").split(","), session, ngTags)
                             nextVideoId = selection
 
@@ -406,8 +406,16 @@ def run():
                 nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
                 live.showMessage(currentLiveId, videoInfo[2], session)
 
-                if is_opening and config("NUCOSEN_OPENING_MESSAGE"):
-                    live.showMessage(currentLiveId, config("NUCOSEN_OPENING_MESSAGE"), session)
+                if is_opening:
+                    if config("NUCOSEN_OPENING_MESSAGE"):
+                        live.showMessage(currentLiveId, config("NUCOSEN_OPENING_MESSAGE"), session)
+                    
+                    # 初回動画の再生時に、設定されているタグのリスト全体を運営コメントに流す
+                    try:
+                        tags_message = f"【設定タグ】{config('TAGS')}\n【リクエスト対象タグ】{config('REQTAGS')}"
+                        live.showMessage(currentLiveId, tags_message, session)
+                    except Exception as err:
+                        logger.warning("タグ一覧の運営コメント送信に失敗しました: %s", err)
                 
                 is_first_video = False
 

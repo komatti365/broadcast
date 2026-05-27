@@ -20,7 +20,7 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 from logging import getLogger
 from random import randint, shuffle, uniform
 from time import sleep
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from requests import get
 from requests.exceptions import ConnectionError as ConnError
@@ -73,7 +73,7 @@ def choiceFromRequests(requests: List[str], choicesNum: int) -> Optional[List[st
 
 
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".randomSelection"))
-def randomSelection(tags: List[str], session: Session, ngTags: set) -> str:
+def randomSelection(tags: List[str], session: Session, ngTags: set) -> Tuple[str, str]:
     _tags = tags.copy()
     url = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search"
     header = {
@@ -107,7 +107,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set) -> str:
     result = dict(response.json())
     # スナップショット検索が死んでいるときはテレビちゃんを休ませる
     if response.status_code == 503:
-        return str(config("MAINTENANCE_VIDEO_ID", default="sm17759202"))
+        return str(config("MAINTENANCE_VIDEO_ID", default="sm17759202")), tag
     response.raise_for_status()
     winners: List[str] = []
     for target in result['data']:
@@ -118,6 +118,6 @@ def randomSelection(tags: List[str], session: Session, ngTags: set) -> str:
         raise RetryRequested("V30 セレクション失敗 {0} {1}".format(tag, offset))
     for winner in winners:
         if quote.getVideoInfo(winner, session, ngTags)[0] is True:
-            return winner
+            return winner, tag
         getLogger(__name__).info("セレクションリジェクト {0}".format(winner))
     raise RetryRequested("V31 セレクション失敗 {0} {1}".format(tag, offset))
