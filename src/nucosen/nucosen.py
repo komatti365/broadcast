@@ -236,9 +236,6 @@ def run():
             if currentQuote is not None:
                 if currentQuote == SPECIFIC_VIDEO_IDS[MAINTENANCE]:
                     logger.info("メンテナンス動画の引用を検知しました")
-                    quote.stop(liveIDs[0], session)
-                    quote.once(
-                        liveIDs[0], SPECIFIC_VIDEO_IDS[MAINTENANCE], session)
                     database.clearNowPlaying()
                 elif currentQuote == SPECIFIC_VIDEO_IDS[CLOSING]:
                     logger.info("エンディング動画の引用を検知しました")
