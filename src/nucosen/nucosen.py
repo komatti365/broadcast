@@ -213,6 +213,7 @@ def run():
                     raise Exception("V10 予約確認エラー")
                 nextLiveBegin = live.getStartTime(nextLive, session)
                 clock.waitUntil(nextLiveBegin)
+                is_fresh_frame = True
                 liveIDs = live.getLives(session)
             elif liveIDs[1] is None:
                 if autoReserveEnabled:
