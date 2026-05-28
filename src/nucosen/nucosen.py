@@ -333,7 +333,8 @@ def run():
                 else:
                     db_requests = database.getAndResetRequests()
                     if db_requests is not None and cooldownAffectsRequests:
-                        db_requests = [req for req in db_requests if req not in cooldownHistory]
+                        cooldown_set = set(cooldownHistory)
+                        db_requests = [req for req in db_requests if req not in cooldown_set]
                         if not db_requests:
                             db_requests = None
                     if db_requests is not None:
