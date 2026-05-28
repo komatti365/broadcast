@@ -355,7 +355,8 @@ def run():
                             logger.debug("キューが空なので補充を行います")
                             request_ids = database.getAndResetRequests()
                             if request_ids is not None and cooldownAffectsRequests:
-                                request_ids = [req for req in request_ids if req not in cooldownHistory]
+                                cooldown_set = set(cooldownHistory)
+                                request_ids = [req for req in request_ids if req not in cooldown_set]
                                 if not request_ids:
                                     request_ids = None
                             if request_ids is not None:
