@@ -18,9 +18,6 @@ def compile_proto():
     proto_root = workspace_root.parent / "integration-docs" / "example" / "nicolive-comment-protobuf"
     
     if not proto_root.exists():
-        proto_root = Path("e:/github/integration-docs/example/nicolive-comment-protobuf")
-        
-    if not proto_root.exists():
         print(f"Error: proto root not found at {proto_root}", file=sys.stderr)
         sys.exit(1)
         
