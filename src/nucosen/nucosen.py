@@ -376,7 +376,8 @@ def run():
                                 selection, _ = personality.randomSelection(
                                     config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                             nextVideoId = selection
-
+                            
+                videoDetail = None
                 logger.info("引用を開始します: {0}".format(nextVideoId))
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
                 videoInfo = quote.getVideoInfo(nextVideoId, session, ngTags)
@@ -442,7 +443,7 @@ def run():
                 title = None
                 thumbnail_url = None
                 try:
-                    if 'videoDetail' not in locals() or videoDetail is None or videoDetail.get("id") != nextVideoId:
+                    if videoDetail is None or videoDetail.get("id") != nextVideoId:
                         videoDetail = quote.getThumbInfo(nextVideoId)
                     title = videoDetail.get("title")
                     thumbnail_url = videoDetail.get("thumbnail_url")
