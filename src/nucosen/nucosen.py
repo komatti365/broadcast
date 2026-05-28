@@ -34,7 +34,7 @@ from decouple import AutoConfig
 from nucosen import clock, db, live, personality, quote, sessionCookie
 
 
-def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, config):
+def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, cooldown_lock, config):
     """キューの残り登録数をバックグラウンドスレッドで常に監視・補充する preloader を開始します。"""
     def preloader_loop():
         logger = getLogger(__name__ + ".preloader")
@@ -55,7 +55,9 @@ def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownH
                     
                     # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
                     existing_video_ids = database.getQueueVideoIds()
-                    temp_cooldown = set(cooldownHistory) | existing_video_ids
+                    with cooldown_lock:
+                        history_copy = list(cooldownHistory)
+                    temp_cooldown = set(history_copy) | existing_video_ids
                     
                     while missing > 0 and max_attempts > 0:
                         try:
@@ -67,8 +69,6 @@ def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownH
                             missing -= 1
                         except Exception as err:
                             logger.warning("ランダム選定に失敗しました: %s", err)
-                            break
-                        finally:
                             max_attempts -= 1
                     
                     if selections:
@@ -142,6 +142,7 @@ def run():
         cooldownSize = max(0, config_int("COOLDOWN_SIZE", 50))
         cooldownAffectsRequests = config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False)
         cooldownHistory = collections.deque(maxlen=cooldownSize)
+        cooldown_lock = threading.Lock()
 
         def _build_video_info_message(template: str, info: dict) -> str:
             text = template.replace("\\n", "\n")
@@ -250,7 +251,7 @@ def run():
         is_fresh_frame = False
 
         # バックグラウンドでキュー監視・補充スレッドを起動
-        start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, config)
+        start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, cooldown_lock, config)
 
         while True:
             logger.debug("現枠・次枠の確保開始")
@@ -483,8 +484,9 @@ def run():
                             title = parts[0]
                 
                 database.recordQuotedVideo(nextVideoId, currentLiveId, title=title, thumbnailUrl=thumbnail_url)
-                if cooldownSize > 0 and nextVideoId not in SPECIFIC_VIDEO_IDS:
-                    cooldownHistory.append(nextVideoId)
+                with cooldown_lock:
+                    if cooldownSize > 0 and nextVideoId not in SPECIFIC_VIDEO_IDS:
+                        cooldownHistory.append(nextVideoId)
                 duration_seconds = int(videoInfo[1].total_seconds())
                 nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
                 live.showMessage(currentLiveId, videoInfo[2], session)
