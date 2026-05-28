@@ -194,23 +194,30 @@ class RestDbIo(object):
 
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".recordQuotedVideo"))
-    def _recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
+    def _recordQuotedVideo(self, videoId: str, liveId: str, title: str = None, thumbnailUrl: str = None) -> bool:
         payload = {
             "videoId": videoId,
             "liveId": liveId,
             "quotedAt": datetime.now(timezone.utc).isoformat()
         }
+        if title:
+            payload["title"] = title
+        if thumbnailUrl:
+            payload["thumbnailUrl"] = thumbnailUrl
+            
         resp = post(self.__quotedUrl, json=payload, headers=self.__header)
         resp.raise_for_status()
         getLogger(__name__).debug("引用済み動画を記録しました: {0} (Live: {1})".format(videoId, liveId))
         return True
 
-    def recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
+    def recordQuotedVideo(self, videoId: str, liveId: str, title: str = None, thumbnailUrl: str = None) -> bool:
         """Record a quoted/broadcasted video to the database.
         
         Args:
             videoId: The video ID (e.g., 'sm12345678')
             liveId: The live broadcast ID (e.g., 'lv123456789')
+            title: Optional video title
+            thumbnailUrl: Optional video thumbnail url
             
         Returns:
             bool: True if recording was successful, False if database URL is not configured
@@ -224,7 +231,7 @@ class RestDbIo(object):
             return False
         
         try:
-            return self._recordQuotedVideo(videoId, liveId)
+            return self._recordQuotedVideo(videoId, liveId, title=title, thumbnailUrl=thumbnailUrl)
         except Exception as e:
             getLogger(__name__).error("引用済み動画の記録に失敗しました: {0}".format(e))
             return False

@@ -439,7 +439,21 @@ def run():
                     clock.waitUntil(currentLiveEnd)
                     break
                 quote.once(currentLiveId, nextVideoId, session)
-                database.recordQuotedVideo(nextVideoId, currentLiveId)
+                title = None
+                thumbnail_url = None
+                try:
+                    if 'videoDetail' not in locals() or videoDetail is None or videoDetail.get("id") != nextVideoId:
+                        videoDetail = quote.getThumbInfo(nextVideoId)
+                    title = videoDetail.get("title")
+                    thumbnail_url = videoDetail.get("thumbnail_url")
+                except Exception as err:
+                    logger.warning("引用履歴用の動画情報取得に失敗しました: %s", err)
+                    if videoInfo and len(videoInfo) > 2 and videoInfo[2]:
+                        parts = videoInfo[2].split(" / ")
+                        if len(parts) > 1:
+                            title = parts[0]
+                
+                database.recordQuotedVideo(nextVideoId, currentLiveId, title=title, thumbnailUrl=thumbnail_url)
                 if cooldownSize > 0 and nextVideoId not in SPECIFIC_VIDEO_IDS:
                     cooldownHistory.append(nextVideoId)
                 duration_seconds = int(videoInfo[1].total_seconds())
