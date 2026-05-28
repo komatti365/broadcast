@@ -32,15 +32,26 @@ class DiscordHandler(logging.StreamHandler):
             config("LOGGING_DISCORD_WEBHOOK", default="BAD_URL")
         )
         if self.url == "BAD_URL":
-            raise Exception(
-                "START UP ERROR : LOGGING_DISCORD_WEBHOOK is not available.")
+            self.url = ""
+            # 標準エラー出力またはロガーに警告を出力
+            import sys
+            print("WARNING: LOGGING_DISCORD_WEBHOOK is not configured. Discord logging is disabled.", file=sys.stderr)
 
     def emit(self, record):
+        if not self.url:
+            return
         msg = self.format(record)
         self.send_message(msg)
 
     def send_message(self, text):
+        if not self.url:
+            return
         message = {
             'content': text
         }
-        requests.post(self.url, json=message)
+        try:
+            resp = requests.post(self.url, json=message, timeout=10)
+            resp.raise_for_status()
+        except Exception as e:
+            import sys
+            print(f"Failed to send log to Discord: {e}", file=sys.stderr)

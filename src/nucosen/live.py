@@ -290,7 +290,8 @@ def reserveLive(
 )
 def getStartTime(liveId: str, session: Session) -> datetime:
     url = "https://live2.nicovideo.jp/unama/watch/{0}/programinfo".format(liveId)
-    response = get(url, cookies=session.cookie)
+    header = {"User-Agent": UserAgent}
+    response = get(url, headers=header, cookies=session.cookie)
     if response.status_code == 401:
         session.login()
         raise ReLoggedIn("L04 ログインセッション更新")
@@ -300,9 +301,17 @@ def getStartTime(liveId: str, session: Session) -> datetime:
     return datetime.fromtimestamp(beginUnixTime, timezone.utc)
 
 
+@retry(
+    NetworkErrors,
+    tries=5,
+    delay=1,
+    backoff=2,
+    logger=getLogger(__name__ + ".getEndTime"),
+)
 def getEndTime(liveId: str, session: Session) -> datetime:
     url = "https://live2.nicovideo.jp/unama/watch/{0}/programinfo".format(liveId)
-    response = get(url, cookies=session.cookie)
+    header = {"User-Agent": UserAgent}
+    response = get(url, headers=header, cookies=session.cookie)
     if response.status_code == 401:
         session.login()
         raise ReLoggedIn("L05 ログインセッション更新")
