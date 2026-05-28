@@ -29,7 +29,7 @@ from traceback import format_exc
 import requests
 from decouple import AutoConfig
 
-from nucosen import clock, db, live, personality, quote, sessionCookie, comment
+from nucosen import clock, db, live, personality, quote, sessionCookie
 
 
 def run():
@@ -297,12 +297,6 @@ def run():
 
             currentLiveId = liveIDs[0]
             logger.info("放送の準備が整いました: {0}".format(currentLiveId))
-            
-            # コメントリクエスト監視の開始
-            # if watcher is not None:
-            #     watcher.stop()
-            # watcher = comment.CommentWatcher(session, database, currentLiveId)
-            # watcher.start()
             
             is_first_video = (currentQuote is None) and is_fresh_frame
             is_fresh_frame = False
