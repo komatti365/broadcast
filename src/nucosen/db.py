@@ -187,6 +187,30 @@ class RestDbIo(object):
             self.__requestUrl+"/*", json=items, headers=self.__header)
         resp.raise_for_status()
 
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".addRequest"))
+    def addRequest(self, videoId: str) -> bool:
+        """Add a video request to the request queue.
+        
+        Args:
+            videoId: The video ID (e.g., 'sm12345678')
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not match("^[a-z][a-z][0-9]+$", videoId):
+            getLogger(__name__).error("E03 リクエスト登録アボート 無効な動画ID {0}".format(videoId))
+            return False
+            
+        try:
+            payload = {"videoId": videoId}
+            resp = post(self.__requestUrl, json=payload, headers=self.__header)
+            resp.raise_for_status()
+            getLogger(__name__).debug("コメントから動画をリクエストキューに登録しました: {0}".format(videoId))
+            return True
+        except Exception as e:
+            getLogger(__name__).error("リクエストの登録に失敗しました: {0}".format(e))
+            return False
+
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".recordQuotedVideo"))
     def recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
         """Record a quoted/broadcasted video to the database.

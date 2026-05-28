@@ -29,11 +29,12 @@ from traceback import format_exc
 import requests
 from decouple import AutoConfig
 
-from nucosen import clock, db, live, personality, quote, sessionCookie
+from nucosen import clock, db, live, personality, quote, sessionCookie, comment
 
 
 def run():
     logger = getLogger(__name__)
+    watcher = None
 
     try:
         database = db.RestDbIo()
@@ -295,6 +296,13 @@ def run():
 
             currentLiveId = liveIDs[0]
             logger.info("放送の準備が整いました: {0}".format(currentLiveId))
+            
+            # コメントリクエスト監視の開始
+            if watcher is not None:
+                watcher.stop()
+            watcher = comment.CommentWatcher(session, database, currentLiveId)
+            watcher.start()
+            
             is_first_video = (currentQuote is None) and is_fresh_frame
             is_fresh_frame = False
             while True:
@@ -495,8 +503,14 @@ def run():
 
                 logger.info("引用終了見込み時刻になりました")
                 database.clearNowPlaying()
+                
+            if watcher is not None:
+                watcher.stop()
+                watcher = None
             logger.info("放送が終了しました: {0}".format(currentLiveId))
     except Exception:
+        if watcher is not None:
+            watcher.stop()
         t = format_exc()
         logger.critical("例外がキャッチされませんでした\n```\n{0}\n```".format(t))
         sys.exit(0)
