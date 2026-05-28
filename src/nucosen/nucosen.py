@@ -69,8 +69,7 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                     ng_tags_set = set(config("NG_TAGS", "").split(","))
                     
                     # CATEGORY_TAGS の動的取得
-                    category_tags_str = config("CATEGORY_TAGS", "")
-                    category_tags_list = [c.strip() for c in category_tags_str.split(",") if c.strip()] if category_tags_str else []
+                    category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                     
                     while missing > 0 and max_attempts > 0:
                         try:
