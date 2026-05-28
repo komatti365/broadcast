@@ -120,6 +120,7 @@ class CommentWatcher(object):
                 if resp_watch.status_code == 401:
                     logger.warning(f"Watch page returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
                     self.session.login()
+                    time.sleep(1)
                     continue
                     
                 resp_watch.raise_for_status()
@@ -132,9 +133,10 @@ class CommentWatcher(object):
                     
                     user_id = str(props.get("user", {}).get("id", "0"))
                     
-                if user_id in ("0", "", "None") or not user_id:
+                if user_id in ("0", "", "None"):
                     logger.warning(f"Resolved userId is '{user_id}' (attempt {attempt}/{max_attempts}). Account might be logged out. Re-logging in...")
                     self.session.login()
+                    time.sleep(1)
                     continue
                     
                 logger.info(f"Successfully resolved user ID: {user_id}")
@@ -146,13 +148,14 @@ class CommentWatcher(object):
                     "User-Agent": self.session.user_agent,
                 }
                 if token:
-                    headers_rooms["X-niconico-session"] = token
+                    headers_rooms["Authorization"] = f"Bearer {token}"
                     
                 resp_rooms = requests.get(url_rooms, headers=headers_rooms, cookies=self.session.cookie, timeout=15)
                 
                 if resp_rooms.status_code == 401:
                     logger.warning(f"Rooms API returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
                     self.session.login()
+                    time.sleep(1)
                     continue
                     
                 resp_rooms.raise_for_status()
