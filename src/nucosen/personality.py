@@ -73,7 +73,9 @@ def choiceFromRequests(requests: List[str], choicesNum: int) -> Optional[List[st
 
 
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".randomSelection"))
-def randomSelection(tags: List[str], session: Session, ngTags: set) -> Tuple[str, str]:
+def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVideos: set = None) -> Tuple[str, str]:
+    if cooldownVideos is None:
+        cooldownVideos = set()
     _tags = tags.copy()
     url = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search"
     header = {
@@ -111,7 +113,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set) -> Tuple[str
     response.raise_for_status()
     winners: List[str] = []
     for target in result['data']:
-        if not target["contentId"] in ngVideos:
+        if target["contentId"] not in ngVideos and target["contentId"] not in cooldownVideos:
             winners.append(target['contentId'])
     shuffle(winners)
     if len(winners) == 0:
