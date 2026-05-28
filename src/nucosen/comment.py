@@ -29,6 +29,8 @@ def read_varint(stream):
         if not (byte & 0x80):
             break
         shift += 7
+        if shift >= 70:
+            raise ValueError("Varint is too long")
     return value
 
 def retrieve_messages(uri, decoder_cls, headers=None, cookies=None):
