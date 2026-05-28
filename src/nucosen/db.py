@@ -72,18 +72,16 @@ class RestDbIo(object):
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".dequeue"))
     def dequeue(self) -> str | None:
-        if self.isQueueUpdated:
-            # 優先・エンキュー逆順
-            query = '?q={}&h={"$orderby": {"priority": 1,"_id":-1}}'
-            resp = get(self.__queueUrl + query, headers=self.__header)
-            resp.raise_for_status()
-            queues: List[Dict[str, str]] = resp.json()
-            self.__dequeueCache = queues
-            self.isQueueUpdated = False
-
-        if len(self.__dequeueCache) < 1:
+        # キャッシュ競合を防ぐため、常にDBから最優先レコードを1件だけ取得してデキュー
+        # priority: -1 (True優先の降順), _id: 1 (古い順の昇順)
+        query = '?q={}&h={"$orderby": {"priority": -1, "_id": 1}}&max=1'
+        resp = get(self.__queueUrl + query, headers=self.__header)
+        resp.raise_for_status()
+        queues: List[Dict[str, str]] = resp.json()
+        
+        if not queues:
             return None
-        result = self.__dequeueCache.pop()
+        result = queues[0]
         self.__deleteQueueItem(result["_id"])
         return result["videoId"]
 
@@ -103,6 +101,7 @@ class RestDbIo(object):
         resp = delete(self.__queueUrl+"/"+itemId, headers=self.__header)
         resp.raise_for_status()
 
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".get_settings"))
     def get_settings(self) -> Dict[str, str]:
         if self.__settingsUrl is None:
             return {}
@@ -117,6 +116,7 @@ class RestDbIo(object):
                 settings[doc["key"]] = str(doc["value"])
         return settings
 
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".publish_settings"))
     def publish_settings(self, settings: Dict[str, str]):
         if self.__settingsUrl is None or len(settings) < 1:
             return
@@ -125,12 +125,16 @@ class RestDbIo(object):
         resp.raise_for_status()
         documents: List[Dict[str, Any]] = resp.json()
         
-        existing_map = {doc["key"]: doc["_id"] for doc in documents if "key" in doc}
+        # 値が変更されたかどうかを検知するため、IDと既存の値をマッピング
+        existing_map = {doc["key"]: (doc["_id"], doc.get("value")) for doc in documents if "key" in doc}
         
         for k, v in settings.items():
             payload = {"key": k, "value": str(v)}
             if k in existing_map:
-                doc_id = existing_map[k]
+                doc_id, current_val = existing_map[k]
+                # 値がすでに同一なら余計なPATCHリクエストを送信せずスキップ
+                if str(current_val) == str(v):
+                    continue
                 patch_resp = patch(self.__settingsUrl + "/" + str(doc_id), json=payload, headers=self.__header)
                 patch_resp.raise_for_status()
             else:
@@ -183,11 +187,23 @@ class RestDbIo(object):
 
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".__deleteRequestItems"))
     def __deleteRequestItems(self, items: List[str]):
+        if not items:
+            return
+        # RestDBの仕様に基づき、/*?q={"_id":{"$in":[...]}} 形式でクエリパラメータによる一括削除を実行
+        import json
+        query = '?q={"_id":{"$in":' + json.dumps(items) + '}}'
         resp = delete(
-            self.__requestUrl+"/*", json=items, headers=self.__header)
+            self.__requestUrl+"/*" + query, headers=self.__header)
         resp.raise_for_status()
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".addRequest"))
+    def _addRequest(self, videoId: str) -> bool:
+        payload = {"videoId": videoId}
+        resp = post(self.__requestUrl, json=payload, headers=self.__header)
+        resp.raise_for_status()
+        getLogger(__name__).debug("コメントから動画をリクエストキューに登録しました: {0}".format(videoId))
+        return True
+
     def addRequest(self, videoId: str) -> bool:
         """Add a video request to the request queue.
         
@@ -202,16 +218,23 @@ class RestDbIo(object):
             return False
             
         try:
-            payload = {"videoId": videoId}
-            resp = post(self.__requestUrl, json=payload, headers=self.__header)
-            resp.raise_for_status()
-            getLogger(__name__).debug("コメントから動画をリクエストキューに登録しました: {0}".format(videoId))
-            return True
+            return self._addRequest(videoId)
         except Exception as e:
             getLogger(__name__).error("リクエストの登録に失敗しました: {0}".format(e))
             return False
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".recordQuotedVideo"))
+    def _recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
+        payload = {
+            "videoId": videoId,
+            "liveId": liveId,
+            "quotedAt": datetime.now(timezone.utc).isoformat()
+        }
+        resp = post(self.__quotedUrl, json=payload, headers=self.__header)
+        resp.raise_for_status()
+        getLogger(__name__).debug("引用済み動画を記録しました: {0} (Live: {1})".format(videoId, liveId))
+        return True
+
     def recordQuotedVideo(self, videoId: str, liveId: str) -> bool:
         """Record a quoted/broadcasted video to the database.
         
@@ -231,70 +254,72 @@ class RestDbIo(object):
             return False
         
         try:
-            payload = {
-                "videoId": videoId,
-                "liveId": liveId,
-                "quotedAt": datetime.now(timezone.utc).isoformat()
-            }
-            resp = post(self.__quotedUrl, json=payload, headers=self.__header)
-            resp.raise_for_status()
-            getLogger(__name__).debug("引用済み動画を記録しました: {0} (Live: {1})".format(videoId, liveId))
-            return True
+            return self._recordQuotedVideo(videoId, liveId)
         except Exception as e:
             getLogger(__name__).error("引用済み動画の記録に失敗しました: {0}".format(e))
             return False
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".updateNowPlaying"))
+    def _updateNowPlaying(self, videoId: str, title: str, duration: int) -> Optional[str]:
+        # 常に最新の1件にするため、既存の情報を全クリア
+        delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
+        delete_resp.raise_for_status()
+        
+        payload = {
+            "videoId": videoId,
+            "title": title,
+            "duration": duration,
+            "remainingTime": duration
+        }
+        post_resp = post(self.__nowplayingUrl, json=payload, headers=self.__header)
+        post_resp.raise_for_status()
+        
+        data = post_resp.json()
+        if isinstance(data, list) and len(data) > 0:
+            return data[0].get("_id")
+        elif isinstance(data, dict):
+            return data.get("_id")
+        return None
+
     def updateNowPlaying(self, videoId: str, title: str, duration: int = 0) -> Optional[str]:
         if self.__nowplayingUrl is None:
             return None
         
         try:
-            # 常に最新の1件にするため、既存の情報を全クリア
-            delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
-            delete_resp.raise_for_status()
-            
-            payload = {
-                "videoId": videoId,
-                "title": title,
-                "duration": duration,
-                "remainingTime": duration
-            }
-            post_resp = post(self.__nowplayingUrl, json=payload, headers=self.__header)
-            post_resp.raise_for_status()
-            
-            data = post_resp.json()
-            if isinstance(data, list) and len(data) > 0:
-                return data[0].get("_id")
-            elif isinstance(data, dict):
-                return data.get("_id")
-            return None
+            return self._updateNowPlaying(videoId, title, duration)
         except Exception as e:
             getLogger(__name__).error("nowplayingの更新に失敗しました: {0}".format(e))
             return None
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".patchNowPlayingTime"))
+    def _patchNowPlayingTime(self, doc_id: str, remainingTime: int) -> bool:
+        patch_resp = patch(self.__nowplayingUrl + "/" + str(doc_id), json={"remainingTime": remainingTime}, headers=self.__header)
+        patch_resp.raise_for_status()
+        return True
+
     def patchNowPlayingTime(self, doc_id: str, remainingTime: int) -> bool:
         if self.__nowplayingUrl is None or not doc_id:
             return False
             
         try:
-            patch_resp = patch(self.__nowplayingUrl + "/" + str(doc_id), json={"remainingTime": remainingTime}, headers=self.__header)
-            patch_resp.raise_for_status()
-            return True
+            return self._patchNowPlayingTime(doc_id, remainingTime)
         except Exception as e:
             getLogger(__name__).error("nowplayingの残り時間更新に失敗しました: {0}".format(e))
             return False
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".clearNowPlaying"))
+    def _clearNowPlaying(self) -> bool:
+        delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
+        delete_resp.raise_for_status()
+        return True
+
     def clearNowPlaying(self) -> bool:
         if self.__nowplayingUrl is None:
             return False
         
         try:
-            delete_resp = delete(self.__nowplayingUrl + "/*?q={}", headers=self.__header)
-            delete_resp.raise_for_status()
-            return True
+            return self._clearNowPlaying()
         except Exception as e:
             getLogger(__name__).error("nowplayingのクリアに失敗しました: {0}".format(e))
             return False
+
