@@ -68,11 +68,14 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                     # NG_TAGS の動的取得
                     ng_tags_set = set(config("NG_TAGS", "").split(","))
                     
+                    # CATEGORY_TAGS の動的取得
+                    category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
+                    
                     while missing > 0 and max_attempts > 0:
                         try:
                             # 補充用動画IDの選定
                             selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown)
+                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown, categoryTags=category_tags_list)
                             selections.append(selection)
                             temp_cooldown.add(selection)
                             missing -= 1
@@ -138,7 +141,7 @@ def run():
     try:
         database = db.RestDbIo()
         settings_keys = {
-            "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "LOGGING_DISCORD_WEBHOOK",
+            "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "CATEGORY_TAGS", "LOGGING_DISCORD_WEBHOOK",
             "DISCORD_VIDEOINFO_WEBHOOK", "DISCORD_ON_VIDEOINFO", "DISCORD_VIDEOINFO_TEXT",
             "BROADCASTER_ON_VIDEOINFO", "BROADCASTER_VIDEOINFO_TEXT",
             "QUEUE_PRELOAD_SIZE", "NG_TAGS",
@@ -434,10 +437,11 @@ def run():
                                 winners = personality.choiceFromRequests(db_requests, 5)
                                 if winners is None:
                                     logger.error("E40 抽選アボート {0}".format(db_requests))
+                                    category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                     with cooldown_lock:
                                         history_copy = list(cooldownHistory)
                                     selection, _ = personality.randomSelection(
-                                        config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                        config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list)
                                     nextVideoId = selection
                                 else:
                                     selection = winners.pop()
@@ -460,10 +464,11 @@ def run():
                                         winners = personality.choiceFromRequests(request_ids, 5)
                                         if winners is None:
                                             logger.error("E40 抽選アボート {0}".format(request_ids))
+                                            category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                             with cooldown_lock:
                                                 history_copy = list(cooldownHistory)
                                             selection, _ = personality.randomSelection(
-                                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list)
                                             nextVideoId = selection
                                         else:
                                             selection = winners.pop()
@@ -471,10 +476,11 @@ def run():
                                             is_requested = True
                                             nextVideoId = selection
                                     else:
+                                        category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                         with cooldown_lock:
                                             history_copy = list(cooldownHistory)
                                         selection, _ = personality.randomSelection(
-                                            config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                            config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list)
                                         nextVideoId = selection
                     except Exception as err:
                         logger.warning("動画の取得または緊急補充に失敗しました: %s", err)
@@ -598,6 +604,8 @@ def run():
                     # 初回動画の再生時に、設定されているタグのリスト全体を運営コメントに流す
                     try:
                         tags_message = f"【設定タグ】{config('TAGS')}\n【リクエスト対象タグ】{config('REQTAGS')}"
+                        if config('CATEGORY_TAGS'):
+                            tags_message += f"\n【対象カテゴリタグ】{config('CATEGORY_TAGS')}"
                         live.showMessage(currentLiveId, tags_message, session)
                     except Exception as err:
                         logger.warning("タグ一覧の運営コメント送信に失敗しました: %s", err)
