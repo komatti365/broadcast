@@ -86,7 +86,7 @@ def run():
 
         cooldownSize = max(0, config_int("COOLDOWN_SIZE", 50))
         cooldownAffectsRequests = config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False)
-        cooldownHistory = collections.deque(maxlen=cooldownSize) if cooldownSize > 0 else collections.deque(maxlen=1)
+        cooldownHistory = collections.deque(maxlen=cooldownSize)
 
         def _build_video_info_message(template: str, info: dict) -> str:
             text = template.replace("\\n", "\n")
