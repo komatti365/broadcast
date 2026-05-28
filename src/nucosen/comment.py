@@ -108,7 +108,7 @@ class CommentWatcher(object):
             try:
                 # Step 1: Resolve user ID (required by rooms API)
                 user_id = "0"
-                url_user = "https://live2.nicovideo.jp/unama/tool/v2/onairs/user"
+                url_user = "https://live.nicovideo.jp/api/v1/users/me"
                 header = {
                     "X-niconico-session": self.session.getSessionString(),
                     "User-Agent": self.session.user_agent,
