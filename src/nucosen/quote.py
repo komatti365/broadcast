@@ -68,10 +68,28 @@ def nicovideo_delay():
 
 def get_layout_settings() -> dict:
     """環境変数（またはDBから反映された値）から最新のレイアウト・音量設定を動的に生成します。"""
-    sourceList = (
-        ("quote", "self") if boolConfig("QUOTE_MAIN", False)
-        else ("self", "quote")
-    )
+    layout_mode = config("QUOTE_LAYOUT", default="3")
+    
+    quote_main = True
+    sub_sound_only = False
+    
+    if layout_mode in ("1", 1):
+        quote_main = False
+        sub_sound_only = False
+    elif layout_mode in ("2", 2):
+        quote_main = False
+        sub_sound_only = True
+    elif layout_mode in ("3", 3):
+        quote_main = True
+        sub_sound_only = False
+    elif layout_mode in ("4", 4):
+        quote_main = True
+        sub_sound_only = True
+    else:
+        quote_main = True
+        sub_sound_only = False
+
+    sourceList = ("quote", "self") if quote_main else ("self", "quote")
     return {
         "main": {
             "source": sourceList[0],
@@ -80,7 +98,7 @@ def get_layout_settings() -> dict:
         "sub": {
             "source": sourceList[1],
             "volume": floatConfig("SUB_VOLUME", 0.5),
-            "isSoundOnly": boolConfig("SUB_SOUND_ONLY", False)
+            "isSoundOnly": sub_sound_only
         }
     }
 quoteBotUri = \
