@@ -19,6 +19,7 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import sys
+import collections
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from os import getcwd
@@ -49,7 +50,8 @@ def run():
             "MIN_ALLOWABLE_DURATION",
             "MAX_ALLOWABLE_DURATION", "NG_VIDEO_IDS", "QUOTE_MAIN",
             "MAIN_VOLUME", "SUB_VOLUME", "SUB_SOUND_ONLY", "DURATION_OVERWRITE",
-            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE", "NOWPLAYING_URL"
+            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE", "NOWPLAYING_URL",
+            "COOLDOWN_SIZE", "COOLDOWN_AFFECTS_REQUESTS"
         }
         db_settings = database.get_settings()
         for key, value in db_settings.items():
@@ -81,6 +83,10 @@ def run():
         queuePreloadSize = max(1, config_int("QUEUE_PRELOAD_SIZE", 10))
 
         autoReserveEnabled = config_bool("NUCOSEN_AUTO_RESERVE", default=True)
+
+        cooldownSize = max(0, config_int("COOLDOWN_SIZE", 50))
+        cooldownAffectsRequests = config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False)
+        cooldownHistory = collections.deque(maxlen=cooldownSize)
 
         def _build_video_info_message(template: str, info: dict) -> str:
             text = template.replace("\\n", "\n")
@@ -307,7 +313,7 @@ def run():
                     while missing > 0 and max_attempts > 0:
                         try:
                             selection, selected_tag = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags)
+                                config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                             database.enqueueByList([selection])
                             current_queue_count = database.getQueueCount()
                             missing = queuePreloadSize - current_queue_count
@@ -326,12 +332,17 @@ def run():
                     nextVideoId = config("OPENING_VIDEO_ID")
                 else:
                     db_requests = database.getAndResetRequests()
+                    if db_requests is not None and cooldownAffectsRequests:
+                        cooldown_set = set(cooldownHistory)
+                        db_requests = [req for req in db_requests if req not in cooldown_set]
+                        if not db_requests:
+                            db_requests = None
                     if db_requests is not None:
                         winners = personality.choiceFromRequests(db_requests, 5)
                         if winners is None:
                             logger.error("E40 抽選アボート {0}".format(db_requests))
                             selection, selected_tag = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags)
+                                config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                         else:
                             selection = winners.pop()
                             database.enqueueByList(winners)
@@ -343,19 +354,24 @@ def run():
                         if nextVideoId is None:
                             logger.debug("キューが空なので補充を行います")
                             request_ids = database.getAndResetRequests()
+                            if request_ids is not None and cooldownAffectsRequests:
+                                cooldown_set = set(cooldownHistory)
+                                request_ids = [req for req in request_ids if req not in cooldown_set]
+                                if not request_ids:
+                                    request_ids = None
                             if request_ids is not None:
                                 winners = personality.choiceFromRequests(request_ids, 5)
                                 if winners is None:
                                     logger.error("E40 抽選アボート {0}".format(request_ids))
                                     selection, selected_tag = personality.randomSelection(
-                                        config("REQTAGS").split(","), session, ngTags)
+                                        config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                                 else:
                                     selection = winners.pop()
                                     database.enqueueByList(winners)
                                     is_requested = True
                             else:
                                 selection, selected_tag = personality.randomSelection(
-                                    config("REQTAGS").split(","), session, ngTags)
+                                    config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                             nextVideoId = selection
 
                 logger.info("引用を開始します: {0}".format(nextVideoId))
@@ -421,6 +437,8 @@ def run():
                     break
                 quote.once(currentLiveId, nextVideoId, session)
                 database.recordQuotedVideo(nextVideoId, currentLiveId)
+                if cooldownSize > 0 and nextVideoId not in SPECIFIC_VIDEO_IDS:
+                    cooldownHistory.append(nextVideoId)
                 duration_seconds = int(videoInfo[1].total_seconds())
                 nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
                 live.showMessage(currentLiveId, videoInfo[2], session)
