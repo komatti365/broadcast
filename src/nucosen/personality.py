@@ -97,7 +97,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
                 
     shuffle(search_targets)
     if not search_targets:
-        raise RetryRequested("検索対象のタグが設定されていません")
+        raise ValueError("検索対象のタグが設定されていません")
         
     tag, target_type = search_targets.pop()
     offset = randint(0, 90)
