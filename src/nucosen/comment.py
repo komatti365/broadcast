@@ -132,8 +132,10 @@ class CommentWatcher(object):
                     
                     user_id = str(props.get("user", {}).get("id", "0"))
                     
-                if user_id == "0":
-                    raise ValueError(f"Could not resolve userId from watch page HTML (status: {resp_watch.status_code})")
+                if user_id in ("0", "", "None") or not user_id:
+                    logger.warning(f"Resolved userId is '{user_id}' (attempt {attempt}/{max_attempts}). Account might be logged out. Re-logging in...")
+                    self.session.login()
+                    continue
                     
                 logger.info(f"Successfully resolved user ID: {user_id}")
                 
