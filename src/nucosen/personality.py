@@ -76,7 +76,7 @@ def choiceFromRequests(requests: List[str], choicesNum: int) -> Optional[List[st
 
 
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".randomSelection"))
-def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVideos: set = None) -> Tuple[str, str]:
+def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVideos: set = None, categoryTags: List[str] = None) -> Tuple[str, str]:
     if cooldownVideos is None:
         cooldownVideos = set()
     _tags = tags.copy()
@@ -104,6 +104,11 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         "_limit": "30",
         "_offset": offset
     }
+
+    if categoryTags:
+        valid_categories = [c.strip() for c in categoryTags if c.strip()]
+        for i, cat in enumerate(valid_categories):
+            payload[f"filters[categoryTags][{i}]"] = cat
 
     ngVideos = str(config("NG_VIDEO_IDS",default="")).split(",")
 
