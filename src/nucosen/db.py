@@ -22,6 +22,7 @@ from os import getcwd
 from re import match
 from typing import Any, Dict, Iterable, List, Optional
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 
 from decouple import AutoConfig
 from requests import delete, get, patch, post
@@ -67,6 +68,7 @@ class RestDbIo(object):
         self.__settingsUrl = config("SETTINGS_URL", default=None)
         self.__nowplayingUrl = config("NOWPLAYING_URL", default=None)
         self.__header = header
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db_async")
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".dequeue"))
     def dequeue(self) -> str | None:
@@ -331,4 +333,12 @@ class RestDbIo(object):
         except Exception as e:
             getLogger(__name__).error("nowplayingのクリアに失敗しました: {0}".format(e))
             return False
+
+    def enqueueByListAsync(self, items: Iterable[str]):
+        """非同期でリストからエンキュー処理を行います。"""
+        self._executor.submit(self.enqueueByList, items)
+
+    def priorityEnqueueAsync(self, item: str):
+        """非同期で優先エンキュー処理を行います。"""
+        self._executor.submit(self.priorityEnqueue, item)
 
