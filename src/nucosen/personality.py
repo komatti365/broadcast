@@ -27,7 +27,7 @@ from requests.exceptions import ConnectionError as ConnError
 from requests.exceptions import HTTPError
 from retry import retry
 from decouple import AutoConfig
-from os import getcwd
+from os import getcwd, environ
 
 from nucosen import quote
 from nucosen.sessionCookie import Session
@@ -37,7 +37,12 @@ class RetryRequested(Exception):
     pass
 
 
-config = AutoConfig(getcwd())
+_configLoader = AutoConfig(getcwd())
+
+def config(key, default=""):
+    if key in environ:
+        return str(environ[key])
+    return str(_configLoader(key, default=default))
 NetworkErrors = (HTTPError, ConnError, RetryRequested)
 
 
@@ -47,13 +52,11 @@ def floatConfig(key, default=0.0):
     except (TypeError, ValueError):
         return default
 
-NICO_REQUEST_DELAY = max(0.0, floatConfig("NICO_REQUEST_DELAY", 1.0))
-
-
 def nicovideo_delay():
-    if NICO_REQUEST_DELAY <= 0:
+    delay = max(0.0, floatConfig("NICO_REQUEST_DELAY", 1.0))
+    if delay <= 0:
         return
-    sleep(NICO_REQUEST_DELAY * uniform(0.9, 1.1))
+    sleep(delay * uniform(0.9, 1.1))
 
 
 UserAgent = str(config("NUCOSEN_UA_PREFIX", default="anonymous")

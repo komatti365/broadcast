@@ -34,14 +34,20 @@ from decouple import AutoConfig
 from nucosen import clock, db, live, personality, quote, sessionCookie
 
 
-def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, cooldown_lock, config):
+def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, config):
     """キューの残り登録数をバックグラウンドスレッドで常に監視・補充する preloader を開始します。"""
     def preloader_loop():
         logger = getLogger(__name__ + ".preloader")
-        logger.info("バックグラウンドのキュー監視スレッドを開始しました (目標: %d 件)", queuePreloadSize)
+        logger.info("バックグラウンドのキュー監視スレッドを開始しました")
         
         while True:
             try:
+                # QUEUE_PRELOAD_SIZE の動的取得
+                try:
+                    queuePreloadSize = max(1, int(config("QUEUE_PRELOAD_SIZE", "10")))
+                except (TypeError, ValueError):
+                    queuePreloadSize = 10
+
                 current_queue_count = database.getQueueCount()
                 if current_queue_count < queuePreloadSize:
                     logger.info(
@@ -59,11 +65,14 @@ def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownH
                         history_copy = list(cooldownHistory)
                     temp_cooldown = set(history_copy) | existing_video_ids
                     
+                    # NG_TAGS の動的取得
+                    ng_tags_set = set(config("NG_TAGS", "").split(","))
+                    
                     while missing > 0 and max_attempts > 0:
                         try:
                             # 補充用動画IDの選定
                             selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags, temp_cooldown)
+                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown)
                             selections.append(selection)
                             temp_cooldown.add(selection)
                             missing -= 1
@@ -85,6 +94,43 @@ def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownH
     return t
 
 
+def start_settings_reloader(database, settings_keys, config, logger):
+    """DB設定をバックグラウンドスレッドで定期的に再ロードし、環境変数に反映する reloader を開始します。"""
+    def reloader_loop():
+        reloader_logger = getLogger(__name__ + ".settings_reloader")
+        reloader_logger.info("バックグラウンドの設定再ロードスレッドを開始しました (確認間隔: 60秒)")
+        
+        while True:
+            time.sleep(60) # 60秒ごとに確認
+            try:
+                latest_settings = database.get_settings()
+                updated_keys = []
+                for key, value in latest_settings.items():
+                    if key in settings_keys and value != "":
+                        old_val = os.environ.get(key, "")
+                        if old_val != value:
+                            os.environ[key] = value
+                            updated_keys.append(f"{key}: {old_val} -> {value}")
+                if updated_keys:
+                    update_msg = "DB設定が更新され、環境変数に反映されました:\n" + "\n".join(updated_keys)
+                    reloader_logger.info(update_msg)
+                    webhook = config("LOGGING_DISCORD_WEBHOOK", default="")
+                    if webhook:
+                        try:
+                            resp = requests.post(webhook, json={"content": update_msg})
+                            resp.raise_for_status()
+                        except Exception as e:
+                            reloader_logger.warning("設定更新のDiscord通知に失敗しました: %s", e)
+                else:
+                    reloader_logger.debug("DB設定の再確認が完了しました (変更なし)")
+            except Exception as err:
+                reloader_logger.warning("DB設定の再確認に失敗しました: %s", err)
+
+    t = threading.Thread(target=reloader_loop, name="SettingsReloader", daemon=True)
+    t.start()
+    return t
+
+
 def run():
     logger = getLogger(__name__)
     watcher = None
@@ -94,8 +140,8 @@ def run():
         settings_keys = {
             "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "LOGGING_DISCORD_WEBHOOK",
             "DISCORD_VIDEOINFO_WEBHOOK", "DISCORD_ON_VIDEOINFO", "DISCORD_VIDEOINFO_TEXT",
-            "BROADCASTER_ON_VIDEOINFO", "BROADCASTER_VIDEOINFO_TEXT", "QUEUE_URL",
-            "REQUEST_URL", "QUEUE_PRELOAD_SIZE", "QUOTED_URL", "NG_TAGS",
+            "BROADCASTER_ON_VIDEOINFO", "BROADCASTER_VIDEOINFO_TEXT",
+            "QUEUE_PRELOAD_SIZE", "NG_TAGS",
             "USE_OLD_VIDEO_API", "USE_OLD_QUOTE_BOT", "IGNORE_QUOTABLE_CHECK",
             "MAINTENANCE_VIDEO_ID", "CLOSING_VIDEO_ID", "NUCOSEN_UA_PREFIX",
             "NUCOSEN_LIVE_DESCRIPTION", "NUCOSEN_TIMESHIFT_ENABLED",
@@ -105,7 +151,7 @@ def run():
             "MAX_ALLOWABLE_DURATION", "NG_VIDEO_IDS",
             "MAIN_VOLUME", "SUB_VOLUME", "DURATION_OVERWRITE",
             "QUOTE_LAYOUT",
-            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE", "NOWPLAYING_URL",
+            "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE",
             "COOLDOWN_SIZE", "COOLDOWN_AFFECTS_REQUESTS"
         }
         db_settings = database.get_settings()
@@ -116,13 +162,23 @@ def run():
         configLoader = AutoConfig(getcwd())
 
         def config(key, default=""):
-            # Wrapper around decouple.AutoConfig to accept a default value.
+            # os.environ を最優先にし、なければ configLoader にフォールバックする
+            if key in os.environ:
+                return str(os.environ[key])
             return str(configLoader(key, default=default))
 
         def config_bool(key, default=False):
+            if key in os.environ:
+                val = os.environ[key]
+                return val.lower() in ("true", "1", "t", "y", "yes")
             return configLoader(key, default=default, cast=bool)
 
         def config_int(key, default=0):
+            if key in os.environ:
+                try:
+                    return int(os.environ[key])
+                except (TypeError, ValueError):
+                    pass
             try:
                 return int(configLoader(key, default=default))
             except (TypeError, ValueError):
@@ -135,13 +191,7 @@ def run():
         current_settings = {key: value for key, value in current_settings.items() if value != ""}
         database.publish_settings(current_settings)
 
-        queuePreloadSize = max(1, config_int("QUEUE_PRELOAD_SIZE", 10))
-
-        autoReserveEnabled = config_bool("NUCOSEN_AUTO_RESERVE", default=True)
-
-        cooldownSize = max(0, config_int("COOLDOWN_SIZE", 50))
-        cooldownAffectsRequests = config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False)
-        cooldownHistory = collections.deque(maxlen=cooldownSize)
+        cooldownHistory = collections.deque(maxlen=max(0, config_int("COOLDOWN_SIZE", 50)))
         cooldown_lock = threading.Lock()
 
         def _build_video_info_message(template: str, info: dict) -> str:
@@ -165,10 +215,11 @@ def run():
             resp = requests.post(url, json={"content": content})
             resp.raise_for_status()
 
-        SPECIFIC_VIDEO_IDS = [
-            (config("MAINTENANCE_VIDEO_ID") or "sm17759202"),
-            (config("CLOSING_VIDEO_ID") or "sm17572946")
-        ]
+        def get_specific_video_ids() -> list[str]:
+            return [
+                (config("MAINTENANCE_VIDEO_ID") or "sm17759202"),
+                (config("CLOSING_VIDEO_ID") or "sm17572946")
+            ]
         MAINTENANCE, CLOSING = 0, 1
 
         def get_secret(key: str, default: str = "") -> str:
@@ -247,11 +298,11 @@ def run():
             session.login()
         logger.debug("チャンネルループ開始")
 
-        ngTags = set(config("NG_TAGS").split(","))
-        is_fresh_frame = False
-
         # バックグラウンドでキュー監視・補充スレッドを起動
-        start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, cooldown_lock, config)
+        start_queue_preloader(database, session, cooldownHistory, cooldown_lock, config)
+
+        # バックグラウンドでDB設定の定期更新スレッドを起動
+        start_settings_reloader(database, settings_keys, config, logger)
 
         while True:
             logger.debug("現枠・次枠の確保開始")
@@ -259,7 +310,7 @@ def run():
             if liveIDs[0] is None:
                 if liveIDs[1] is None:
                     logger.warning("W0L 枠未検出")
-                    if autoReserveEnabled:
+                    if config_bool("NUCOSEN_AUTO_RESERVE", default=True):
                         live.reserveLive(
                             title=config("LIVE_TITLE"),
                             communityId=config("COMMUNITY"),
@@ -287,7 +338,7 @@ def run():
                         logger.info("現枠の開始を待機しています。10秒後に再試行します。")
                         clock.waitUntil(datetime.now(timezone.utc) + timedelta(seconds=10))
             elif liveIDs[1] is None:
-                if autoReserveEnabled:
+                if config_bool("NUCOSEN_AUTO_RESERVE", default=True):
                     live.reserveLive(
                         title=config("LIVE_TITLE"),
                         communityId=config("COMMUNITY"),
@@ -306,10 +357,10 @@ def run():
             currentLiveEnd = live.getEndTime(liveIDs[0], session)
             currentQuote = quote.getCurrent(liveIDs[0], session)
             if currentQuote is not None:
-                if currentQuote == SPECIFIC_VIDEO_IDS[MAINTENANCE]:
+                if currentQuote == get_specific_video_ids()[MAINTENANCE]:
                     logger.info("メンテナンス動画の引用を検知しました")
                     database.clearNowPlaying()
-                elif currentQuote == SPECIFIC_VIDEO_IDS[CLOSING]:
+                elif currentQuote == get_specific_video_ids()[CLOSING]:
                     logger.info("エンディング動画の引用を検知しました")
                     if liveIDs[1] is None:
                         logger.info(
@@ -320,7 +371,7 @@ def run():
                     else:
                         nextLiveBegin = live.getStartTime(liveIDs[1], session)
                         clock.waitUntil(currentLiveEnd)
-                        if autoReserveEnabled:
+                        if config_bool("NUCOSEN_AUTO_RESERVE", default=True):
                             live.reserveLive(
                                 title=config("LIVE_TITLE"),
                                 communityId=config("COMMUNITY"),
@@ -339,7 +390,7 @@ def run():
                     logger.info("一般動画の引用を検知しました: {0}".format(currentQuote))
                     quote.stop(liveIDs[0], session)
                     maintenanceSpan = quote.once(
-                        liveIDs[0], SPECIFIC_VIDEO_IDS[MAINTENANCE], session)
+                        liveIDs[0], get_specific_video_ids()[MAINTENANCE], session)
                     maintenanceEnd = datetime.now(
                         timezone.utc) + maintenanceSpan
                     logger.error("E30 引用停止 {0}".format(currentQuote))
@@ -365,8 +416,10 @@ def run():
                     nextVideoId = config("OPENING_VIDEO_ID")
                 else:
                     db_requests = database.getAndResetRequests()
-                    if db_requests is not None and cooldownAffectsRequests:
-                        cooldown_set = set(cooldownHistory)
+                    if db_requests is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
+                        with cooldown_lock:
+                            history_copy = list(cooldownHistory)
+                        cooldown_set = set(history_copy)
                         db_requests = [req for req in db_requests if req not in cooldown_set]
                         if not db_requests:
                             db_requests = None
@@ -374,8 +427,10 @@ def run():
                         winners = personality.choiceFromRequests(db_requests, 5)
                         if winners is None:
                             logger.error("E40 抽選アボート {0}".format(db_requests))
+                            with cooldown_lock:
+                                history_copy = list(cooldownHistory)
                             selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
+                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
                         else:
                             selection = winners.pop()
                             database.enqueueByListAsync(winners)
@@ -386,8 +441,10 @@ def run():
                         if nextVideoId is None:
                             logger.debug("キューが空なので補充を行います")
                             request_ids = database.getAndResetRequests()
-                            if request_ids is not None and cooldownAffectsRequests:
-                                cooldown_set = set(cooldownHistory)
+                            if request_ids is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
+                                with cooldown_lock:
+                                    history_copy = list(cooldownHistory)
+                                cooldown_set = set(history_copy)
                                 request_ids = [req for req in request_ids if req not in cooldown_set]
                                 if not request_ids:
                                     request_ids = None
@@ -395,21 +452,25 @@ def run():
                                 winners = personality.choiceFromRequests(request_ids, 5)
                                 if winners is None:
                                     logger.error("E40 抽選アボート {0}".format(request_ids))
+                                    with cooldown_lock:
+                                        history_copy = list(cooldownHistory)
                                     selection, _ = personality.randomSelection(
-                                        config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
+                                        config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
                                 else:
                                     selection = winners.pop()
                                     database.enqueueByListAsync(winners)
                                     is_requested = True
                             else:
+                                with cooldown_lock:
+                                    history_copy = list(cooldownHistory)
                                 selection, _ = personality.randomSelection(
-                                    config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
+                                    config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
                             nextVideoId = selection
                             
                 videoDetail = None
                 logger.info("引用を開始します: {0}".format(nextVideoId))
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
-                videoInfo = quote.getVideoInfo(nextVideoId, session, ngTags)
+                videoInfo = quote.getVideoInfo(nextVideoId, session, set(config("NG_TAGS").split(",")))
                 if videoInfo[0] is False:
                     logger.warning("V20 引用不能エラーのためスキップします: {0} {1}".format(nextVideoId, currentLiveId))
 
@@ -459,7 +520,7 @@ def run():
                     logger.info("引用アボート: 時間内に引用が終了しない見込みです")
                     database.priorityEnqueueAsync(nextVideoId)
                     quote.loop(
-                        currentLiveId, SPECIFIC_VIDEO_IDS[CLOSING], session)
+                        currentLiveId, get_specific_video_ids()[CLOSING], session)
                     database.clearNowPlaying()
                     live.showMessage(
                         currentLiveId,
@@ -485,7 +546,11 @@ def run():
                 
                 database.recordQuotedVideo(nextVideoId, currentLiveId, title=title, thumbnailUrl=thumbnail_url)
                 with cooldown_lock:
-                    if cooldownSize > 0 and nextVideoId not in SPECIFIC_VIDEO_IDS:
+                    current_cooldown_size = max(0, config_int("COOLDOWN_SIZE", 50))
+                    if current_cooldown_size != cooldownHistory.maxlen:
+                        cooldownHistory = collections.deque(list(cooldownHistory), maxlen=current_cooldown_size)
+                        
+                    if current_cooldown_size > 0 and nextVideoId not in get_specific_video_ids():
                         cooldownHistory.append(nextVideoId)
                 duration_seconds = int(videoInfo[1].total_seconds())
                 nowplaying_doc_id = database.updateNowPlaying(nextVideoId, videoInfo[2], duration_seconds)
@@ -504,28 +569,6 @@ def run():
                 
                 is_first_video = False
 
-                try:
-                    latest_settings = database.get_settings()
-                    updated_keys = []
-                    for key, value in latest_settings.items():
-                        if key in settings_keys and value != "":
-                            old_val = os.environ.get(key, "")
-                            if old_val != value:
-                                os.environ[key] = value
-                                updated_keys.append(f"{key}: {old_val} -> {value}")
-                    if updated_keys:
-                        update_msg = "DB設定が更新され、環境変数に反映されました:\n" + "\n".join(updated_keys)
-                        logger.info(update_msg)
-                        webhook = config("LOGGING_DISCORD_WEBHOOK", default="")
-                        if webhook:
-                            try:
-                                _send_discord_notification(webhook, update_msg)
-                            except Exception as e:
-                                logger.warning("設定更新のDiscord通知に失敗しました: %s", e)
-                    else:
-                        logger.debug("DB設定の再確認が完了しました (変更なし)")
-                except Exception as err:
-                    logger.warning("DB設定の再確認に失敗しました: %s", err)
 
                 # 引用終了まで一気に待機せず、最大10秒刻みで残り時間をDBに更新し続ける
                 target_end_time = datetime.now(timezone.utc) + videoInfo[1]
