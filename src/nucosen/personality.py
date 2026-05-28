@@ -106,11 +106,13 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
     }
 
     if categoryTags:
-        for i, cat in enumerate(categoryTags):
+        unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]
+        for i, cat in enumerate(unique_categories):
             payload[f"filters[categoryTags][{i}]"] = cat
 
     if genreTags:
-        for i, genre in enumerate(genreTags):
+        unique_genres = [g.strip() for g in dict.fromkeys(genreTags) if g.strip()]
+        for i, genre in enumerate(unique_genres):
             payload[f"filters[genre][{i}]"] = genre
 
     ngVideos = str(config("NG_VIDEO_IDS",default="")).split(",")
