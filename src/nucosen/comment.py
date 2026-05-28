@@ -103,29 +103,40 @@ class CommentWatcher(object):
             
     def _get_view_url(self) -> str | None:
         """Resolve message server viewUrl from rooms API."""
+        import html
+        import json
+        
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                # Step 1: Resolve user ID (required by rooms API)
+                # Step 1: Resolve user ID from Nicolive watch page HTML
                 user_id = "0"
-                url_user = "https://live.nicovideo.jp/api/v1/users/me"
-                header = {
-                    "X-niconico-session": self.session.getSessionString(),
+                url_watch = f"https://live.nicovideo.jp/watch/{self.live_id}"
+                headers_watch = {
                     "User-Agent": self.session.user_agent,
                 }
-                resp_user = requests.get(url_user, headers=header, cookies=self.session.cookie, timeout=10)
+                resp_watch = requests.get(url_watch, headers=headers_watch, cookies=self.session.cookie, timeout=10)
                 
-                if resp_user.status_code == 401:
-                    logger.warning(f"User ID API returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
+                if resp_watch.status_code == 401:
+                    logger.warning(f"Watch page returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
                     self.session.login()
                     continue
                     
-                resp_user.raise_for_status()
+                resp_watch.raise_for_status()
                 
-                user_id = str(resp_user.json().get("data", {}).get("userId", "0"))
-                if user_id == "0":
-                    raise ValueError("Resolved userId is 0, which is invalid.")
+                # Parse props.user.id from script#embedded-data data-props
+                match = re.search(r'id="embedded-data"\s+data-props="([^"]+)"', resp_watch.text)
+                if match:
+                    props_str = html.unescape(match.group(1))
+                    props = json.loads(props_str)
                     
+                    user_id = str(props.get("user", {}).get("id", "0"))
+                    
+                if user_id == "0":
+                    raise ValueError(f"Could not resolve userId from watch page HTML (status: {resp_watch.status_code})")
+                    
+                logger.info(f"Successfully resolved user ID: {user_id}")
+                
                 # Step 2: Request rooms endpoint
                 url_rooms = f"https://api.live2.nicovideo.jp/api/v1/unama/programs/rooms?userId={user_id}&nicoliveProgramId={self.live_id}"
                 token = self.session.getSessionString()
