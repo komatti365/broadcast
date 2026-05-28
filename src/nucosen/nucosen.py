@@ -305,6 +305,7 @@ def run():
         start_settings_reloader(database, settings_keys, config, logger)
 
         while True:
+            is_fresh_frame = False
             logger.debug("現枠・次枠の確保開始")
             liveIDs = live.getLives(session)
             if liveIDs[0] is None:
