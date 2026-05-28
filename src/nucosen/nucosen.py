@@ -464,8 +464,7 @@ def run():
                                         winners = personality.choiceFromRequests(request_ids, 5)
                                         if winners is None:
                                             logger.error("E40 抽選アボート {0}".format(request_ids))
-                                            category_tags_str = config("CATEGORY_TAGS", "")
-                                            category_tags_list = [c.strip() for c in category_tags_str.split(",") if c.strip()] if category_tags_str else []
+                                            category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                             with cooldown_lock:
                                                 history_copy = list(cooldownHistory)
                                             selection, _ = personality.randomSelection(
