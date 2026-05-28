@@ -334,11 +334,28 @@ class RestDbIo(object):
             getLogger(__name__).error("nowplayingのクリアに失敗しました: {0}".format(e))
             return False
 
+    def _async_callback(self, future):
+        """非同期スレッドで発生した未キャッチ例外を検知してログ出力します。"""
+        try:
+            exception = future.exception()
+            if exception:
+                getLogger(__name__ + ".async").error(
+                    "バックグラウンド非同期処理で例外が発生しました:",
+                    exc_info=exception
+                )
+        except Exception as e:
+            getLogger(__name__ + ".async").error(
+                "非同期コールバックの実行中にエラーが発生しました:",
+                exc_info=e
+            )
+
     def enqueueByListAsync(self, items: Iterable[str]):
         """非同期でリストからエンキュー処理を行います。"""
-        self._executor.submit(self.enqueueByList, items)
+        future = self._executor.submit(self.enqueueByList, items)
+        future.add_done_callback(self._async_callback)
 
     def priorityEnqueueAsync(self, item: str):
         """非同期で優先エンキュー処理を行います。"""
-        self._executor.submit(self.priorityEnqueue, item)
+        future = self._executor.submit(self.priorityEnqueue, item)
+        future.add_done_callback(self._async_callback)
 

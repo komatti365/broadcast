@@ -20,6 +20,8 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import sys
 import collections
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from os import getcwd
@@ -30,6 +32,57 @@ import requests
 from decouple import AutoConfig
 
 from nucosen import clock, db, live, personality, quote, sessionCookie
+
+
+def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, config):
+    """キューの残り登録数をバックグラウンドスレッドで常に監視・補充する preloader を開始します。"""
+    def preloader_loop():
+        logger = getLogger(__name__ + ".preloader")
+        logger.info("バックグラウンドのキュー監視スレッドを開始しました (目標: %d 件)", queuePreloadSize)
+        
+        while True:
+            try:
+                current_queue_count = database.getQueueCount()
+                if current_queue_count < queuePreloadSize:
+                    logger.info(
+                        "キュー不足を検知しました: 現在 %d 件, 目標 %d 件。補充を開始します。",
+                        current_queue_count,
+                        queuePreloadSize,
+                    )
+                    missing = queuePreloadSize - current_queue_count
+                    selections = []
+                    max_attempts = 5
+                    
+                    # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
+                    existing_video_ids = database.getQueueVideoIds()
+                    temp_cooldown = set(cooldownHistory) | existing_video_ids
+                    
+                    while missing > 0 and max_attempts > 0:
+                        try:
+                            # 補充用動画IDの選定
+                            selection, _ = personality.randomSelection(
+                                config("REQTAGS").split(","), session, ngTags, temp_cooldown)
+                            selections.append(selection)
+                            temp_cooldown.add(selection)
+                            missing -= 1
+                        except Exception as err:
+                            logger.warning("ランダム選定に失敗しました: %s", err)
+                            break
+                        finally:
+                            max_attempts -= 1
+                    
+                    if selections:
+                        logger.info("%d 件の動画をキューに補充します: %s", len(selections), selections)
+                        # preloader 自体がバックグラウンドスレッドで動くため、通常の同期的な enqueueByList を実行
+                        database.enqueueByList(selections)
+            except Exception as err:
+                logger.error("キュー補充監視スレッドで予期せぬエラーが発生しました: %s", err)
+            
+            time.sleep(30) # 30秒ごとに監視
+
+    t = threading.Thread(target=preloader_loop, name="QueuePreloader", daemon=True)
+    t.start()
+    return t
 
 
 def run():
@@ -196,6 +249,9 @@ def run():
         ngTags = set(config("NG_TAGS").split(","))
         is_fresh_frame = False
 
+        # バックグラウンドでキュー監視・補充スレッドを起動
+        start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, config)
+
         while True:
             logger.debug("現枠・次枠の確保開始")
             liveIDs = live.getLives(session)
@@ -302,39 +358,6 @@ def run():
             is_fresh_frame = False
             while True:
 
-                def ensure_preloaded_queue():
-                    current_queue_count = database.getQueueCount()
-                    if current_queue_count >= queuePreloadSize:
-                        return
-                    logger.info(
-                        "キューを事前登録します: 現在 %d 件, 目標 %d 件",
-                        current_queue_count,
-                        queuePreloadSize,
-                    )
-                    missing = queuePreloadSize - current_queue_count
-                    selections = []
-                    max_attempts = 5
-                    temp_cooldown = set(cooldownHistory)
-                    while missing > 0 and max_attempts > 0:
-                        try:
-                            selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags, temp_cooldown)
-                            selections.append(selection)
-                            temp_cooldown.add(selection)
-                            missing -= 1
-                        except Exception as err:
-                            logger.warning("ランダム選定に失敗しました: %s", err)
-                            break
-                        finally:
-                            max_attempts -= 1
-
-                    if selections:
-                        logger.info("%d 件の動画を非同期で事前キュー登録します: %s", len(selections), selections)
-                        database.enqueueByListAsync(selections)
-
-                    if missing > 0:
-                        logger.info("事前キューが目標数に達しませんでした: %d 件不足", missing)
-
                 is_requested = False
                 is_opening = is_first_video
                 if is_first_video and config("OPENING_VIDEO_ID"):
@@ -358,7 +381,6 @@ def run():
                             is_requested = True
                         nextVideoId = selection
                     else:
-                        ensure_preloaded_queue()
                         nextVideoId = database.dequeue()
                         if nextVideoId is None:
                             logger.debug("キューが空なので補充を行います")
