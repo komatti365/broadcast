@@ -121,9 +121,8 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
             else:
                 cooldown_fallback.append(content_id)
     shuffle(winners)
-    if len(winners) == 0:
-        winners = cooldown_fallback
-        shuffle(winners)
+    shuffle(cooldown_fallback)
+    winners.extend(cooldown_fallback)
     if len(winners) == 0:
         raise RetryRequested("V30 セレクション失敗 {0} {1}".format(tag, offset))
     for winner in winners:
