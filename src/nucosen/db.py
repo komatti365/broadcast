@@ -143,6 +143,7 @@ class RestDbIo(object):
     def enqueueByList(self, items: Iterable[str]):
         existingVideoIds = self.getQueueVideoIds()
         payload = list()
+        from nucosen.quote import getThumbInfo
         for item in items:
             if not match("^[a-z][a-z][0-9]+$", item):
                 getLogger(__name__).error("E09 通常エンキューのアボート {0}".format(item))
@@ -150,7 +151,22 @@ class RestDbIo(object):
             if item in existingVideoIds:
                 getLogger(__name__).debug("重複動画をスキップしました: {0}".format(item))
                 continue
-            payload.append({"videoId": item})
+            
+            title = None
+            thumbnailUrl = None
+            try:
+                videoDetail = getThumbInfo(item)
+                title = videoDetail.get("title")
+                thumbnailUrl = videoDetail.get("thumbnail_url")
+            except Exception as e:
+                getLogger(__name__).warning("通常追加用の動画情報取得に失敗しました ({0}): {1}".format(item, e))
+                
+            data = {"videoId": item}
+            if title:
+                data["title"] = title
+            if thumbnailUrl:
+                data["thumbnailUrl"] = thumbnailUrl
+            payload.append(data)
             existingVideoIds.add(item)
         if len(payload) < 1:
             return
@@ -162,7 +178,23 @@ class RestDbIo(object):
         if not match("^[a-z][a-z][0-9]+$", item):
             getLogger(__name__).error("E01 優先エンキューのアボート {0}".format(item))
             return
+        
+        title = None
+        thumbnailUrl = None
+        try:
+            from nucosen.quote import getThumbInfo
+            videoDetail = getThumbInfo(item)
+            title = videoDetail.get("title")
+            thumbnailUrl = videoDetail.get("thumbnail_url")
+        except Exception as e:
+            getLogger(__name__).warning("優先追加用の動画情報取得に失敗しました: {0}".format(e))
+            
         payload = {"videoId": item, "priority": True}
+        if title:
+            payload["title"] = title
+        if thumbnailUrl:
+            payload["thumbnailUrl"] = thumbnailUrl
+            
         resp = post(self.__queueUrl, json=payload, headers=self.__header)
         resp.raise_for_status()
 
