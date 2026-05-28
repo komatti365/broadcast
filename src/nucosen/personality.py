@@ -115,11 +115,17 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
     cooldown_fallback: List[str] = []
     for target in result['data']:
         if target["contentId"] not in ngVideos:
+    cooldown_fallback: List[str] = []
+    for target in result['data']:
+        if target["contentId"] not in ngVideos:
             if target["contentId"] not in cooldownVideos:
                 winners.append(target['contentId'])
             else:
                 cooldown_fallback.append(target['contentId'])
     shuffle(winners)
+    if len(winners) == 0:
+        winners = cooldown_fallback
+        shuffle(winners)
     if len(winners) == 0:
         winners = cooldown_fallback
         shuffle(winners)
