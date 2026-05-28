@@ -106,8 +106,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
     }
 
     if categoryTags:
-        valid_categories = [c.strip() for c in categoryTags if c.strip()]
-        for i, cat in enumerate(valid_categories):
+        for i, cat in enumerate(categoryTags):
             payload[f"filters[categoryTags][{i}]"] = cat
 
     ngVideos = str(config("NG_VIDEO_IDS",default="")).split(",")
