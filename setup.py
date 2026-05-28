@@ -19,7 +19,7 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 
 # NOTE : To build, use `py setup.py sdist`
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 import pathlib
 
 here = pathlib.Path(__file__).parent.resolve()
@@ -38,7 +38,7 @@ setup(
     author='NUCOSen Management Committee',
     author_email='info@nucosen.live',
     package_dir={'': 'src'},
-    packages=find_packages(where='src'),
+    packages=find_namespace_packages(where='src'),
     python_requires='>=3.10, <4',
     install_requires=open(
         "requirements.txt",
