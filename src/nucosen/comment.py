@@ -142,13 +142,10 @@ class CommentWatcher(object):
                 logger.info(f"Successfully resolved user ID: {user_id}")
                 
                 # Step 2: Request rooms endpoint
-                url_rooms = f"https://api.live2.nicovideo.jp/api/v1/unama/programs/rooms?userId={user_id}&nicoliveProgramId={self.live_id}"
-                token = self.session.getSessionString()
+                url_rooms = f"https://live2.nicovideo.jp/api/v1/unama/programs/rooms?userId={user_id}&nicoliveProgramId={self.live_id}"
                 headers_rooms = {
                     "User-Agent": self.session.user_agent,
                 }
-                if token:
-                    headers_rooms["Authorization"] = f"Bearer {token}"
                     
                 resp_rooms = requests.get(url_rooms, headers=headers_rooms, cookies=self.session.cookie, timeout=15)
                 
