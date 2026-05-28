@@ -76,16 +76,30 @@ def choiceFromRequests(requests: List[str], choicesNum: int) -> Optional[List[st
 
 
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".randomSelection"))
-def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVideos: set = None, categoryTags: List[str] = None, genreTags: List[str] = None) -> Tuple[str, str]:
+def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVideos: set = None, categoryTags: List[str] = None, genreTags: List[str] = None, exactTags: List[str] = None, ngTagsExact: set = None) -> Tuple[str, str]:
     if cooldownVideos is None:
         cooldownVideos = set()
-    _tags = tags.copy()
     url = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search"
     header = {
         "User-Agent": UserAgent
     }
-    shuffle(_tags)
-    tag = _tags.pop()
+    
+    # タグと検索方式（部分一致 vs 完全一致）のペアをマージしてシャッフル
+    search_targets = []
+    if tags:
+        for t in tags:
+            if t.strip():
+                search_targets.append((t.strip(), "tags"))
+    if exactTags:
+        for t in exactTags:
+            if t.strip():
+                search_targets.append((t.strip(), "tagsExact"))
+                
+    shuffle(search_targets)
+    if not search_targets:
+        raise RetryRequested("検索対象のタグが設定されていません")
+        
+    tag, target_type = search_targets.pop()
     offset = randint(0, 90)
     minimumAllowableDuration = \
         int(config("MIN_ALLOWABLE_DURATION", default=45))
@@ -95,7 +109,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         maximumAllowableDuration = minimumAllowableDuration + (10 * 60)
     payload = {
         "q": tag,
-        "targets": "tagsExact",
+        "targets": target_type,
         "fields": "contentId",
         "filters[lengthSeconds][gte]": minimumAllowableDuration,
         "filters[lengthSeconds][lte]": maximumAllowableDuration,
@@ -139,7 +153,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
     if len(winners) == 0:
         raise RetryRequested("V30 セレクション失敗 {0} {1}".format(tag, offset))
     for winner in winners:
-        if quote.getVideoInfo(winner, session, ngTags)[0] is True:
+        if quote.getVideoInfo(winner, session, ngTags, ngTagsExact)[0] is True:
             return winner, tag
         getLogger(__name__).info("セレクションリジェクト {0}".format(winner))
     raise RetryRequested("V31 セレクション失敗 {0} {1}".format(tag, offset))

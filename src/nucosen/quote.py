@@ -140,15 +140,29 @@ def stop(liveId: str, session: Session):
 
 
 @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".checkNgTag"))
-def checkNgTag(videoId: str, ngTags: set) -> bool:
+def checkNgTag(videoId: str, ngTags: set, ngTagsExact: set = None) -> bool:
     url = "https://ext.nicovideo.jp/api/getthumbinfo/{0}"
     nicovideo_delay()
     resp = get(url.format(videoId))
     resp.raise_for_status()
     videoThumbInfo = ET.fromstring(resp.text)
     tagsElement = videoThumbInfo.findall(".//tag")
-    tags = set(map(lambda x: x.text, tagsElement))
-    return True if len(ngTags & tags) == 0 else False
+    tags = [x.text for x in tagsElement if x.text]
+    tags_set = set(tags)
+    
+    # 完全一致でのNGチェック
+    if ngTagsExact:
+        if len(ngTagsExact & tags_set) > 0:
+            return False
+            
+    # 部分一致でのNGチェック
+    for ng_tag in ngTags:
+        if not ng_tag:
+            continue
+        for tag in tags:
+            if ng_tag in tag:
+                return False
+    return True
 
 
 @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".getThumbInfo"))
@@ -202,7 +216,7 @@ def getThumbInfo(videoId: str) -> Dict[str, Any]:
 
 
 @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".getVideoInfo"))
-def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, timedelta, str]:
+def getVideoInfo(videoId: str, session: Session, ngTags: set, ngTagsExact: set = None) -> Tuple[bool, timedelta, str]:
     # NOTE - 戻り値: (引用可能性, 動画長, 紹介メッセージ)
     url = "https://services-eapi.spi.nicovideo.jp/v1/tools/live/quote/services/video/contents/{0}"
     nicovideo_delay()
@@ -238,7 +252,7 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
             or newApiVideoData.get("isQuotableByOtherContents", False)
     # NOTE : 重いので引用可能動画のみNGタグの処理を行う
     if quotable:
-        quotable = checkNgTag(videoId, ngTags)
+        quotable = checkNgTag(videoId, ngTags, ngTagsExact)
     length = timedelta(seconds=videoData.get("length", 0))
     introducing = "{0} / {1}".format(
         videoData.get("title", "（無題）"),

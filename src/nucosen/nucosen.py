@@ -67,6 +67,10 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                     
                     # NG_TAGS の動的取得
                     ng_tags_set = set(config("NG_TAGS", "").split(","))
+                    ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                    
+                    # REQTAGS_EXACT の動的取得
+                    req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
                     
                     # CATEGORY_TAGS の動的取得
                     category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
@@ -78,7 +82,7 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                         try:
                             # 補充用動画IDの選定
                             selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown, categoryTags=category_tags_list, genreTags=genre_tags_list)
+                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown, categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
                             selections.append(selection)
                             temp_cooldown.add(selection)
                             missing -= 1
@@ -144,10 +148,10 @@ def run():
     try:
         database = db.RestDbIo()
         settings_keys = {
-            "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "CATEGORY_TAGS", "GENRE_TAGS", "LOGGING_DISCORD_WEBHOOK",
+            "LIVE_TITLE", "COMMUNITY", "TAGS", "REQTAGS", "REQTAGS_EXACT", "CATEGORY_TAGS", "GENRE_TAGS", "LOGGING_DISCORD_WEBHOOK",
             "DISCORD_VIDEOINFO_WEBHOOK", "DISCORD_ON_VIDEOINFO", "DISCORD_VIDEOINFO_TEXT",
             "BROADCASTER_ON_VIDEOINFO", "BROADCASTER_VIDEOINFO_TEXT",
-            "QUEUE_PRELOAD_SIZE", "NG_TAGS",
+            "QUEUE_PRELOAD_SIZE", "NG_TAGS", "NG_TAGS_EXACT",
             "USE_OLD_VIDEO_API", "USE_OLD_QUOTE_BOT", "IGNORE_QUOTABLE_CHECK",
             "MAINTENANCE_VIDEO_ID", "CLOSING_VIDEO_ID", "NUCOSEN_UA_PREFIX",
             "NUCOSEN_LIVE_DESCRIPTION", "NUCOSEN_TIMESHIFT_ENABLED",
@@ -442,10 +446,12 @@ def run():
                                     logger.error("E40 抽選アボート {0}".format(db_requests))
                                     category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                     genre_tags_list = [c.strip() for c in config("GENRE_TAGS", "").split(",") if c.strip()]
+                                    req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                                    ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
                                     with cooldown_lock:
                                         history_copy = list(cooldownHistory)
                                     selection, _ = personality.randomSelection(
-                                        config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list)
+                                        config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
                                     nextVideoId = selection
                                 else:
                                     selection = winners.pop()
@@ -470,10 +476,12 @@ def run():
                                             logger.error("E40 抽選アボート {0}".format(request_ids))
                                             category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                             genre_tags_list = [c.strip() for c in config("GENRE_TAGS", "").split(",") if c.strip()]
+                                            req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                                            ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
                                             with cooldown_lock:
                                                 history_copy = list(cooldownHistory)
                                             selection, _ = personality.randomSelection(
-                                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list)
+                                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
                                             nextVideoId = selection
                                         else:
                                             selection = winners.pop()
@@ -483,10 +491,12 @@ def run():
                                     else:
                                         category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                         genre_tags_list = [c.strip() for c in config("GENRE_TAGS", "").split(",") if c.strip()]
+                                        req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                                        ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
                                         with cooldown_lock:
                                             history_copy = list(cooldownHistory)
                                         selection, _ = personality.randomSelection(
-                                            config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list)
+                                            config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy), categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
                                         nextVideoId = selection
                     except Exception as err:
                         logger.warning("動画の取得または緊急補充に失敗しました: %s", err)
@@ -517,7 +527,8 @@ def run():
                 videoDetail = None
                 logger.info("引用を開始します: {0}".format(nextVideoId))
                 currentLiveEnd = live.getEndTime(currentLiveId, session)
-                videoInfo = quote.getVideoInfo(nextVideoId, session, set(config("NG_TAGS").split(",")))
+                ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                videoInfo = quote.getVideoInfo(nextVideoId, session, set(config("NG_TAGS").split(",")), ngTagsExact=ng_tags_exact_set)
                 if videoInfo[0] is False:
                     logger.warning("V20 引用不能エラーのためスキップします: {0} {1}".format(nextVideoId, currentLiveId))
 
@@ -610,6 +621,8 @@ def run():
                     # 初回動画の再生時に、設定されているタグのリスト全体を運営コメントに流す
                     try:
                         tags_message = f"【設定タグ】{config('TAGS')}\n【リクエスト対象タグ】{config('REQTAGS')}"
+                        if config('REQTAGS_EXACT'):
+                            tags_message += f"\n【リクエスト対象タグ（完全一致）】{config('REQTAGS_EXACT')}"
                         if config('CATEGORY_TAGS'):
                             tags_message += f"\n【対象カテゴリタグ】{config('CATEGORY_TAGS')}"
                         if config('GENRE_TAGS'):
