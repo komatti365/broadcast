@@ -312,19 +312,25 @@ def run():
                         queuePreloadSize,
                     )
                     missing = queuePreloadSize - current_queue_count
+                    selections = []
                     max_attempts = 5
+                    temp_cooldown = set(cooldownHistory)
                     while missing > 0 and max_attempts > 0:
                         try:
                             selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
-                            database.enqueueByList([selection])
-                            current_queue_count = database.getQueueCount()
-                            missing = queuePreloadSize - current_queue_count
+                                config("REQTAGS").split(","), session, ngTags, temp_cooldown)
+                            selections.append(selection)
+                            temp_cooldown.add(selection)
+                            missing -= 1
                         except Exception as err:
-                            logger.warning("ランダム補充に失敗しました: %s", err)
+                            logger.warning("ランダム選定に失敗しました: %s", err)
                             break
                         finally:
                             max_attempts -= 1
+
+                    if selections:
+                        logger.info("%d 件の動画を非同期で事前キュー登録します: %s", len(selections), selections)
+                        database.enqueueByListAsync(selections)
 
                     if missing > 0:
                         logger.info("事前キューが目標数に達しませんでした: %d 件不足", missing)
@@ -348,7 +354,7 @@ def run():
                                 config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                         else:
                             selection = winners.pop()
-                            database.enqueueByList(winners)
+                            database.enqueueByListAsync(winners)
                             is_requested = True
                         nextVideoId = selection
                     else:
@@ -370,7 +376,7 @@ def run():
                                         config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                                 else:
                                     selection = winners.pop()
-                                    database.enqueueByList(winners)
+                                    database.enqueueByListAsync(winners)
                                     is_requested = True
                             else:
                                 selection, _ = personality.randomSelection(
@@ -428,7 +434,7 @@ def run():
                         logger.warning("放送者コメント動画情報送信に失敗しました: %s", err)
                 if datetime.now(timezone.utc) + videoInfo[1] > currentLiveEnd - timedelta(minutes=1):
                     logger.info("引用アボート: 時間内に引用が終了しない見込みです")
-                    database.priorityEnqueue(nextVideoId)
+                    database.priorityEnqueueAsync(nextVideoId)
                     quote.loop(
                         currentLiveId, SPECIFIC_VIDEO_IDS[CLOSING], session)
                     database.clearNowPlaying()
