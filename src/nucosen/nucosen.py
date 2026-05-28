@@ -476,8 +476,7 @@ def run():
                                             is_requested = True
                                             nextVideoId = selection
                                     else:
-                                        category_tags_str = config("CATEGORY_TAGS", "")
-                                        category_tags_list = [c.strip() for c in category_tags_str.split(",") if c.strip()] if category_tags_str else []
+                                        category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
                                         with cooldown_lock:
                                             history_copy = list(cooldownHistory)
                                         selection, _ = personality.randomSelection(
