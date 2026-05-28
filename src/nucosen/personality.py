@@ -112,10 +112,17 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         return str(config("MAINTENANCE_VIDEO_ID", default="sm17759202")), tag
     response.raise_for_status()
     winners: List[str] = []
+    cooldown_fallback: List[str] = []
     for target in result['data']:
-        if target["contentId"] not in ngVideos and target["contentId"] not in cooldownVideos:
-            winners.append(target['contentId'])
+        content_id = target["contentId"]
+        if content_id not in ngVideos:
+            if content_id not in cooldownVideos:
+                winners.append(content_id)
+            else:
+                cooldown_fallback.append(content_id)
     shuffle(winners)
+    shuffle(cooldown_fallback)
+    winners.extend(cooldown_fallback)
     if len(winners) == 0:
         raise RetryRequested("V30 セレクション失敗 {0} {1}".format(tag, offset))
     for winner in winners:
