@@ -157,10 +157,11 @@ def checkNgTag(videoId: str, ngTags: set, ngTagsExact: set = None) -> bool:
             
     # 部分一致でのNGチェック
     for ng_tag in ngTags:
-        if not ng_tag:
+        clean_ng_tag = ng_tag.strip()
+        if not clean_ng_tag:
             continue
         for tag in tags:
-            if ng_tag in tag:
+            if clean_ng_tag in tag:
                 return False
     return True
 
