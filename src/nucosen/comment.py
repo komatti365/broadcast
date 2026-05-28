@@ -103,37 +103,59 @@ class CommentWatcher(object):
             
     def _get_view_url(self) -> str | None:
         """Resolve message server viewUrl from rooms API."""
-        try:
-            # Step 1: Resolve user ID (required by rooms API)
-            user_id = "0"
-            url_user = "https://live2.nicovideo.jp/unama/tool/v2/onairs/user"
-            header = {
-                "X-niconico-session": self.session.getSessionString(),
-                "User-Agent": self.session.user_agent,
-            }
-            resp_user = requests.get(url_user, headers=header, cookies=self.session.cookie, timeout=10)
-            if resp_user.status_code == 200:
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # Step 1: Resolve user ID (required by rooms API)
+                user_id = "0"
+                url_user = "https://live2.nicovideo.jp/unama/tool/v2/onairs/user"
+                header = {
+                    "X-niconico-session": self.session.getSessionString(),
+                    "User-Agent": self.session.user_agent,
+                }
+                resp_user = requests.get(url_user, headers=header, cookies=self.session.cookie, timeout=10)
+                
+                if resp_user.status_code == 401:
+                    logger.warning(f"User ID API returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
+                    self.session.login()
+                    continue
+                    
+                resp_user.raise_for_status()
+                
                 user_id = str(resp_user.json().get("data", {}).get("userId", "0"))
+                if user_id == "0":
+                    raise ValueError("Resolved userId is 0, which is invalid.")
+                    
+                # Step 2: Request rooms endpoint
+                url_rooms = f"https://api.live2.nicovideo.jp/api/v1/unama/programs/rooms?userId={user_id}&nicoliveProgramId={self.live_id}"
+                token = self.session.getSessionString()
+                headers_rooms = {
+                    "User-Agent": self.session.user_agent,
+                }
+                if token:
+                    headers_rooms["X-niconico-session"] = token
+                    
+                resp_rooms = requests.get(url_rooms, headers=headers_rooms, cookies=self.session.cookie, timeout=15)
                 
-            # Step 2: Request rooms endpoint
-            url_rooms = f"https://api.live2.nicovideo.jp/api/v1/unama/programs/rooms?userId={user_id}&nicoliveProgramId={self.live_id}"
-            token = self.session.getSessionString() # fallback to user_session as Bearer token
-            headers_rooms = {
-                "User-Agent": self.session.user_agent,
-            }
-            if token:
-                headers_rooms["Authorization"] = f"Bearer {token}"
+                if resp_rooms.status_code == 401:
+                    logger.warning(f"Rooms API returned 401 (attempt {attempt}/{max_attempts}). Re-logging in...")
+                    self.session.login()
+                    continue
+                    
+                resp_rooms.raise_for_status()
                 
-            resp_rooms = requests.get(url_rooms, headers=headers_rooms, cookies=self.session.cookie, timeout=15)
-            resp_rooms.raise_for_status()
-            
-            rooms_data = resp_rooms.json().get("data", [])
-            if rooms_data:
-                view_url = rooms_data[0].get("viewUrl")
-                logger.info(f"Resolved rooms viewUrl: {view_url}")
-                return view_url
-        except Exception as e:
-            logger.error(f"Failed to resolve viewUrl for live room: {e}")
+                rooms_data = resp_rooms.json().get("data", [])
+                if rooms_data:
+                    view_url = rooms_data[0].get("viewUrl")
+                    logger.info(f"Resolved rooms viewUrl: {view_url}")
+                    return view_url
+                    
+            except Exception as e:
+                logger.error(f"Failed to resolve viewUrl for live room (attempt {attempt}/{max_attempts}): {e}")
+                if attempt < max_attempts:
+                    time.sleep(1)
+                else:
+                    break
         return None
 
     def _run(self):
