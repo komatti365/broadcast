@@ -35,6 +35,9 @@ from nucosen.sessionCookie import Session
 from defusedxml import ElementTree as ET
 
 
+N_Q_GVI_WARNED_OLD_API = False
+
+
 class ReLoggedIn(Exception):
     pass
 
@@ -213,9 +216,9 @@ def getVideoInfo(videoId: str, session: Session, ngTags: set) -> Tuple[bool, tim
     videoData: Dict[str, Any] = dict(resp.json()).get("data", {})
     if boolConfig("USE_OLD_VINFO_API", False):
         # NOTE - This is old api
-        if not "N_Q_GVI_WARNED_OLD_API" in globals():
+        global N_Q_GVI_WARNED_OLD_API
+        if not N_Q_GVI_WARNED_OLD_API:
             getLogger(__name__).warning("旧APIの呼び出し")
-            global N_Q_GVI_WARNED_OLD_API
             N_Q_GVI_WARNED_OLD_API = True
         quotable = boolConfig("IGNORE_QUOTABLE_CHECK", False)\
             or videoData.get("quotable", False)

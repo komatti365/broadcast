@@ -33,10 +33,6 @@ from decouple import AutoConfig
 from os import getcwd
 
 
-class NotExpectedResult(Exception):
-    pass
-
-
 class ReLoggedIn(Exception):
     pass
 

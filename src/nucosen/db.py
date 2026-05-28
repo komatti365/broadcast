@@ -61,14 +61,12 @@ class RestDbIo(object):
                 queueUrl, requestUrl, key))
         header = {'x-apikey': str(key), 'cache-control': "no-cache"}
 
-        self.isQueueUpdated: bool = True
         self.__queueUrl = str(queueUrl)
         self.__requestUrl = str(requestUrl)
         self.__quotedUrl = quotedUrl
         self.__settingsUrl = config("SETTINGS_URL", default=None)
         self.__nowplayingUrl = config("NOWPLAYING_URL", default=None)
         self.__header = header
-        self.__dequeueCache: List[Dict[str, str]] = []
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".dequeue"))
     def dequeue(self) -> str | None:
@@ -158,7 +156,6 @@ class RestDbIo(object):
             return
         resp = post(self.__queueUrl, json=payload, headers=self.__header)
         resp.raise_for_status()
-        self.isQueueUpdated = True
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".priorityEnqueue"))
     def priorityEnqueue(self, item: str):
@@ -168,7 +165,6 @@ class RestDbIo(object):
         payload = {"videoId": item, "priority": True}
         resp = post(self.__queueUrl, json=payload, headers=self.__header)
         resp.raise_for_status()
-        self.isQueueUpdated = True
 
     @retry(NetworkErrors, tries=10, delay=1, backoff=2, logger=getLogger(__name__ + ".getAndResetRequests"))
     def getAndResetRequests(self) -> Optional[List[str]]:
@@ -196,32 +192,6 @@ class RestDbIo(object):
             self.__requestUrl+"/*" + query, headers=self.__header)
         resp.raise_for_status()
 
-    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".addRequest"))
-    def _addRequest(self, videoId: str) -> bool:
-        payload = {"videoId": videoId}
-        resp = post(self.__requestUrl, json=payload, headers=self.__header)
-        resp.raise_for_status()
-        getLogger(__name__).debug("コメントから動画をリクエストキューに登録しました: {0}".format(videoId))
-        return True
-
-    def addRequest(self, videoId: str) -> bool:
-        """Add a video request to the request queue.
-        
-        Args:
-            videoId: The video ID (e.g., 'sm12345678')
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not match("^[a-z][a-z][0-9]+$", videoId):
-            getLogger(__name__).error("E03 リクエスト登録アボート 無効な動画ID {0}".format(videoId))
-            return False
-            
-        try:
-            return self._addRequest(videoId)
-        except Exception as e:
-            getLogger(__name__).error("リクエストの登録に失敗しました: {0}".format(e))
-            return False
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".recordQuotedVideo"))
     def _recordQuotedVideo(self, videoId: str, liveId: str) -> bool:

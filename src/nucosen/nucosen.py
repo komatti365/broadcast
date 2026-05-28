@@ -315,7 +315,7 @@ def run():
                     max_attempts = 5
                     while missing > 0 and max_attempts > 0:
                         try:
-                            selection, selected_tag = personality.randomSelection(
+                            selection, _ = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                             database.enqueueByList([selection])
                             current_queue_count = database.getQueueCount()
@@ -344,7 +344,7 @@ def run():
                         winners = personality.choiceFromRequests(db_requests, 5)
                         if winners is None:
                             logger.error("E40 抽選アボート {0}".format(db_requests))
-                            selection, selected_tag = personality.randomSelection(
+                            selection, _ = personality.randomSelection(
                                 config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                         else:
                             selection = winners.pop()
@@ -366,14 +366,14 @@ def run():
                                 winners = personality.choiceFromRequests(request_ids, 5)
                                 if winners is None:
                                     logger.error("E40 抽選アボート {0}".format(request_ids))
-                                    selection, selected_tag = personality.randomSelection(
+                                    selection, _ = personality.randomSelection(
                                         config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                                 else:
                                     selection = winners.pop()
                                     database.enqueueByList(winners)
                                     is_requested = True
                             else:
-                                selection, selected_tag = personality.randomSelection(
+                                selection, _ = personality.randomSelection(
                                     config("REQTAGS").split(","), session, ngTags, set(cooldownHistory))
                             nextVideoId = selection
 
