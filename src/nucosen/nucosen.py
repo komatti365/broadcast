@@ -85,6 +85,43 @@ def start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownH
     return t
 
 
+def start_settings_reloader(database, settings_keys, config, logger):
+    """DB設定をバックグラウンドスレッドで定期的に再ロードし、環境変数に反映する reloader を開始します。"""
+    def reloader_loop():
+        reloader_logger = getLogger(__name__ + ".settings_reloader")
+        reloader_logger.info("バックグラウンドの設定再ロードスレッドを開始しました (確認間隔: 60秒)")
+        
+        while True:
+            time.sleep(60) # 60秒ごとに確認
+            try:
+                latest_settings = database.get_settings()
+                updated_keys = []
+                for key, value in latest_settings.items():
+                    if key in settings_keys and value != "":
+                        old_val = os.environ.get(key, "")
+                        if old_val != value:
+                            os.environ[key] = value
+                            updated_keys.append(f"{key}: {old_val} -> {value}")
+                if updated_keys:
+                    update_msg = "DB設定が更新され、環境変数に反映されました:\n" + "\n".join(updated_keys)
+                    reloader_logger.info(update_msg)
+                    webhook = config("LOGGING_DISCORD_WEBHOOK", default="")
+                    if webhook:
+                        try:
+                            resp = requests.post(webhook, json={"content": update_msg})
+                            resp.raise_for_status()
+                        except Exception as e:
+                            reloader_logger.warning("設定更新のDiscord通知に失敗しました: %s", e)
+                else:
+                    reloader_logger.debug("DB設定の再確認が完了しました (変更なし)")
+            except Exception as err:
+                reloader_logger.warning("DB設定の再確認に失敗しました: %s", err)
+
+    t = threading.Thread(target=reloader_loop, name="SettingsReloader", daemon=True)
+    t.start()
+    return t
+
+
 def run():
     logger = getLogger(__name__)
     watcher = None
@@ -252,6 +289,9 @@ def run():
 
         # バックグラウンドでキュー監視・補充スレッドを起動
         start_queue_preloader(database, queuePreloadSize, session, ngTags, cooldownHistory, cooldown_lock, config)
+
+        # バックグラウンドでDB設定の定期更新スレッドを起動
+        start_settings_reloader(database, settings_keys, config, logger)
 
         while True:
             logger.debug("現枠・次枠の確保開始")
@@ -504,28 +544,6 @@ def run():
                 
                 is_first_video = False
 
-                try:
-                    latest_settings = database.get_settings()
-                    updated_keys = []
-                    for key, value in latest_settings.items():
-                        if key in settings_keys and value != "":
-                            old_val = os.environ.get(key, "")
-                            if old_val != value:
-                                os.environ[key] = value
-                                updated_keys.append(f"{key}: {old_val} -> {value}")
-                    if updated_keys:
-                        update_msg = "DB設定が更新され、環境変数に反映されました:\n" + "\n".join(updated_keys)
-                        logger.info(update_msg)
-                        webhook = config("LOGGING_DISCORD_WEBHOOK", default="")
-                        if webhook:
-                            try:
-                                _send_discord_notification(webhook, update_msg)
-                            except Exception as e:
-                                logger.warning("設定更新のDiscord通知に失敗しました: %s", e)
-                    else:
-                        logger.debug("DB設定の再確認が完了しました (変更なし)")
-                except Exception as err:
-                    logger.warning("DB設定の再確認に失敗しました: %s", err)
 
                 # 引用終了まで一気に待機せず、最大10秒刻みで残り時間をDBに更新し続ける
                 target_end_time = datetime.now(timezone.utc) + videoInfo[1]
