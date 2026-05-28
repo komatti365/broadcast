@@ -410,62 +410,96 @@ def run():
             is_fresh_frame = False
             while True:
 
+                nextVideoId = None
                 is_requested = False
                 is_opening = is_first_video
-                if is_first_video and config("OPENING_VIDEO_ID"):
-                    nextVideoId = config("OPENING_VIDEO_ID")
-                else:
-                    db_requests = database.getAndResetRequests()
-                    if db_requests is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
-                        with cooldown_lock:
-                            history_copy = list(cooldownHistory)
-                        cooldown_set = set(history_copy)
-                        db_requests = [req for req in db_requests if req not in cooldown_set]
-                        if not db_requests:
-                            db_requests = None
-                    if db_requests is not None:
-                        winners = personality.choiceFromRequests(db_requests, 5)
-                        if winners is None:
-                            logger.error("E40 抽選アボート {0}".format(db_requests))
-                            with cooldown_lock:
-                                history_copy = list(cooldownHistory)
-                            selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+
+                # 動画が決定するまで繰り返すセーフティループ
+                last_wait_comment_time = datetime.min
+                while nextVideoId is None:
+                    try:
+                        if is_first_video and config("OPENING_VIDEO_ID"):
+                            nextVideoId = config("OPENING_VIDEO_ID")
                         else:
-                            selection = winners.pop()
-                            database.enqueueByListAsync(winners)
-                            is_requested = True
-                        nextVideoId = selection
-                    else:
-                        nextVideoId = database.dequeue()
-                        if nextVideoId is None:
-                            logger.debug("キューが空なので補充を行います")
-                            request_ids = database.getAndResetRequests()
-                            if request_ids is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
+                            db_requests = database.getAndResetRequests()
+                            if db_requests is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
                                 with cooldown_lock:
                                     history_copy = list(cooldownHistory)
                                 cooldown_set = set(history_copy)
-                                request_ids = [req for req in request_ids if req not in cooldown_set]
-                                if not request_ids:
-                                    request_ids = None
-                            if request_ids is not None:
-                                winners = personality.choiceFromRequests(request_ids, 5)
+                                db_requests = [req for req in db_requests if req not in cooldown_set]
+                                if not db_requests:
+                                    db_requests = None
+                            if db_requests is not None:
+                                winners = personality.choiceFromRequests(db_requests, 5)
                                 if winners is None:
-                                    logger.error("E40 抽選アボート {0}".format(request_ids))
+                                    logger.error("E40 抽選アボート {0}".format(db_requests))
                                     with cooldown_lock:
                                         history_copy = list(cooldownHistory)
                                     selection, _ = personality.randomSelection(
                                         config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                    nextVideoId = selection
                                 else:
                                     selection = winners.pop()
                                     database.enqueueByListAsync(winners)
                                     is_requested = True
+                                    nextVideoId = selection
                             else:
-                                with cooldown_lock:
-                                    history_copy = list(cooldownHistory)
-                                selection, _ = personality.randomSelection(
-                                    config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
-                            nextVideoId = selection
+                                nextVideoId = database.dequeue()
+                                if nextVideoId is None:
+                                    logger.debug("キューが空なので補充を行います")
+                                    request_ids = database.getAndResetRequests()
+                                    if request_ids is not None and config_bool("COOLDOWN_AFFECTS_REQUESTS", default=False):
+                                        with cooldown_lock:
+                                            history_copy = list(cooldownHistory)
+                                        cooldown_set = set(history_copy)
+                                        request_ids = [req for req in request_ids if req not in cooldown_set]
+                                        if not request_ids:
+                                            request_ids = None
+                                    if request_ids is not None:
+                                        winners = personality.choiceFromRequests(request_ids, 5)
+                                        if winners is None:
+                                            logger.error("E40 抽選アボート {0}".format(request_ids))
+                                            with cooldown_lock:
+                                                history_copy = list(cooldownHistory)
+                                            selection, _ = personality.randomSelection(
+                                                config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                            nextVideoId = selection
+                                        else:
+                                            selection = winners.pop()
+                                            database.enqueueByListAsync(winners)
+                                            is_requested = True
+                                            nextVideoId = selection
+                                    else:
+                                        with cooldown_lock:
+                                            history_copy = list(cooldownHistory)
+                                        selection, _ = personality.randomSelection(
+                                            config("REQTAGS").split(","), session, set(config("NG_TAGS").split(",")), set(history_copy))
+                                        nextVideoId = selection
+                    except Exception as err:
+                        logger.warning("動画の取得または緊急補充に失敗しました: %s", err)
+                        nextVideoId = None
+
+                    # それでも動画が見つからない（空）場合のセーフティ
+                    if nextVideoId is None:
+                        # 1. オープニング動画が設定されていれば、時間稼ぎとして引用
+                        opening_video = config("OPENING_VIDEO_ID")
+                        if opening_video:
+                            logger.info("キューが空のため、時間稼ぎとしてオープニング動画 (%s) を再生します", opening_video)
+                            nextVideoId = opening_video
+                            break
+
+                        # 2. オープニング動画もない場合は、キュー補充を待機
+                        now = datetime.now()
+                        if (now - last_wait_comment_time).total_seconds() >= 60:
+                            wait_msg = "【お知らせ】現在リクエスト動画の補充を待機しています... (リクエスト歓迎！)"
+                            try:
+                                live.showMessage(currentLiveId, wait_msg, session)
+                            except Exception as e:
+                                logger.warning("待機メッセージのコメント送信に失敗しました: %s", e)
+                            last_wait_comment_time = now
+
+                        logger.info("再生可能な動画がないため、10秒間待機します...")
+                        clock.waitUntil(datetime.now(timezone.utc) + timedelta(seconds=10))
                             
                 videoDetail = None
                 logger.info("引用を開始します: {0}".format(nextVideoId))
