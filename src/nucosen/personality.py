@@ -79,7 +79,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
     _tags = tags.copy()
     url = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search"
     header = {
-        "UserAgent": UserAgent
+        "User-Agent": UserAgent
     }
     shuffle(_tags)
     tag = _tags.pop()
@@ -106,11 +106,13 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
 
     nicovideo_delay()
     response = get(url, headers=header, params=payload)
-    result = dict(response.json())
-    # スナップショット検索が死んでいるときはテレビちゃんを休ませる
     if response.status_code == 503:
         return str(config("MAINTENANCE_VIDEO_ID", default="sm17759202")), tag
     response.raise_for_status()
+    try:
+        result = dict(response.json())
+    except Exception as e:
+        raise RetryRequested("スナップショット検索のレスポンス解析に失敗しました: {0}".format(e))
     winners: List[str] = []
     cooldown_fallback: List[str] = []
     for target in result['data']:

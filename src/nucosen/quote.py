@@ -66,21 +66,23 @@ def nicovideo_delay():
         return
     sleep(NICO_REQUEST_DELAY * uniform(0.9, 1.1))
 
-sourceList = (
-    ("quote", "self") if boolConfig("QUOTE_MAIN", False)
-    else ("self", "quote")
-)
-layoutSettings = {
-    "main": {
-        "source": sourceList[0],
-        "volume": floatConfig("MAIN_VOLUME", 0.5)
-    },
-    "sub": {
-        "source": sourceList[1],
-        "volume": floatConfig("SUB_VOLUME", 0.5),
-        "isSoundOnly": boolConfig("SUB_SOUND_ONLY", False)
+def get_layout_settings() -> dict:
+    """環境変数（またはDBから反映された値）から最新のレイアウト・音量設定を動的に生成します。"""
+    sourceList = (
+        ("quote", "self") if boolConfig("QUOTE_MAIN", False)
+        else ("self", "quote")
+    )
+    return {
+        "main": {
+            "source": sourceList[0],
+            "volume": floatConfig("MAIN_VOLUME", 0.5)
+        },
+        "sub": {
+            "source": sourceList[1],
+            "volume": floatConfig("SUB_VOLUME", 0.5),
+            "isSoundOnly": boolConfig("SUB_SOUND_ONLY", False)
+        }
     }
-}
 quoteBotUri = \
     "https://services-eapi.spi.nicovideo.jp/v1/services/quotation/contents/{0}/bots" \
     if config("USE_OLD_QUOTE_BOT",default=False) else \
@@ -230,7 +232,7 @@ def once(liveId: str, videoId: str, session: Session) -> timedelta:
 
     url = quoteBotUri
     payload = {
-        "layout": layoutSettings,
+        "layout": get_layout_settings(),
         "contents": [
             {
                 "id": videoId,
@@ -258,7 +260,7 @@ def once(liveId: str, videoId: str, session: Session) -> timedelta:
             "Cookie : {1}\n" +
             "Response body ; \n{2}").format(
                 url.format(liveId),
-                "Bad" if session.getSessionString is None else "Good",
+                "Bad" if session.getSessionString() is None else "Good",
                 resp.text
         ))
         raise RetryRequired("W01 引用拒否発生")
@@ -279,7 +281,7 @@ def setLoop(liveId: str, session: Session):
     nicovideo_delay()
     url = quoteBotUri + "/layout"
     payload = {
-        "layout": layoutSettings,
+        "layout": get_layout_settings(),
         "repeat": True
     }
     resp = patch(url.format(liveId), json=payload, cookies=session.cookie)
