@@ -3,10 +3,30 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Ruff による高速かつ高品質な静的解析 (Linter) とコードフォーマットのチェックを行います
+      - name: Run Ruff
+        uses: astral-sh/ruff-action@v3
+
   build:
+    needs: lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -16,16 +36,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # キャッシュ機能や高度なビルドオプションを使用するために Buildx をセットアップします
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # メタデータ（イメージ名・タグ・ラベル）を動的かつ安全に生成します
+      # github.repository に大文字が含まれていても自動で小文字化されるため、プッシュエラーを防げます
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            # mainブランチプッシュ時または手動実行時は latest と sha-xxxx タグを生成
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+            type=sha,format=long,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+            
+            # v*タグプッシュ時はセマンティックバージョニングに加えて -stable サフィックスを付与
+            type=semver,pattern={{version}},suffix=-stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},suffix=-stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}},suffix=-stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest-stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            
+            # プルリクエスト時は pr-xxxx タグを生成
+            type=ref,event=pr
+
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # イメージのビルドとプッシュ（プルリクエスト時はプッシュをスキップしてビルド検証のみ実行）
+      # GitHub Actions キャッシュ（type=gha）を有効化し、高速な差分ビルドを実現します
       - name: Build and push image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

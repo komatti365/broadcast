@@ -132,7 +132,7 @@ class Session(object):
         # NOTE - X-niconico-sessionなどに使用
         if self.cookie is None:
             return
-        if not "user_session" in self.cookie:
+        if "user_session" not in self.cookie:
             return
         return self.cookie["user_session"]
 
