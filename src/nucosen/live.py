@@ -265,7 +265,7 @@ def reserveLive(
     response = takeReservation(liveDict, startTime, duration, session)
     responseJson: dict = response.json()
     responseMeta: dict = responseJson.get("meta", {})
-    if not responseMeta.get("status", 0) in [201, 400]:
+    if responseMeta.get("status", 0) not in [201, 400]:
         getLogger(__name__).warning("W20 枠予約失敗 {0}".format(responseJson))
         response.raise_for_status()
         return
