@@ -10,7 +10,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Ruff による高速かつ高品質な静的解析 (Linter) とコードフォーマットのチェックを行います
+      - name: Run Ruff
+        uses: astral-sh/ruff-action@v3
+
   build:
+    needs: lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
