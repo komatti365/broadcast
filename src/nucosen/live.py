@@ -17,10 +17,11 @@ You should have received a copy of the GNU Affero General Public License
 along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from logging import getLogger
 from typing import Any, Dict, List, Optional, Tuple
 import sys
+import time
 
 from requests import get, post, put
 from requests.exceptions import ConnectionError as ConnError
@@ -80,6 +81,9 @@ def sGetLives(session: Session) -> Tuple[str, str]:
         return (str(result[0]), str(result[1]))
 
 
+_last_message_time = 0.0
+
+
 @retry(
     NetworkErrors,
     tries=10,
@@ -88,10 +92,18 @@ def sGetLives(session: Session) -> Tuple[str, str]:
     logger=getLogger(__name__ + ".showMessage"),
 )
 def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = False):
+    global _last_message_time
+    now = time.monotonic()
+    if _last_message_time > 0:
+        elapsed = now - _last_message_time
+        if elapsed < 3.0:
+            time.sleep(3.0 - elapsed)
+
     url = "https://live2.nicovideo.jp/watch/{0}/operator_comment".format(liveId)
     payload = {"text": msg, "isPermanent": permanent}
     header = {"User-Agent": UserAgent}
     resp = put(url, json=payload, headers=header, cookies=session.cookie, timeout=10)
+    _last_message_time = time.monotonic()
 
     if resp.status_code == 400:
         try:
@@ -205,9 +217,9 @@ def getStartTimeOfNextLive(now: Optional[datetime] = None) -> datetime:
         now = now.astimezone(JST)
     tomorrow = now.date() + timedelta(days=1)
     startCandidates = [
-        datetime.combine(now.date(), time(hour=0, tzinfo=JST)),
-        datetime.combine(now.date(), time(hour=12, tzinfo=JST)),
-        datetime.combine(tomorrow, time(hour=0, tzinfo=JST)),
+        datetime.combine(now.date(), datetime_time(hour=0, tzinfo=JST)),
+        datetime.combine(now.date(), datetime_time(hour=12, tzinfo=JST)),
+        datetime.combine(tomorrow, datetime_time(hour=0, tzinfo=JST)),
     ]
     for startCandidate in startCandidates:
         if startCandidate >= now:
@@ -217,7 +229,7 @@ def getStartTimeOfNextLive(now: Optional[datetime] = None) -> datetime:
 
         pprint(locals())
         getLogger(__name__).error("E10 放送開始時刻算出エラー")
-        startCandidate = datetime.combine(tomorrow, time(hour=10, tzinfo=JST))
+        startCandidate = datetime.combine(tomorrow, datetime_time(hour=10, tzinfo=JST))
     return startCandidate.astimezone(timezone.utc)
 
 
