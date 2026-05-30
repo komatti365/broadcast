@@ -93,16 +93,17 @@ _last_message_time = 0.0
 )
 def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = False):
     global _last_message_time
-    now = time.time()
-    elapsed = now - _last_message_time
-    if elapsed < 3.0:
-        time.sleep(3.0 - elapsed)
+    now = time.monotonic()
+    if _last_message_time > 0:
+        elapsed = now - _last_message_time
+        if elapsed < 3.0:
+            time.sleep(3.0 - elapsed)
 
     url = "https://live2.nicovideo.jp/watch/{0}/operator_comment".format(liveId)
     payload = {"text": msg, "isPermanent": permanent}
     header = {"User-Agent": UserAgent}
-    _last_message_time = time.time()
     resp = put(url, json=payload, headers=header, cookies=session.cookie, timeout=10)
+    _last_message_time = time.monotonic()
 
     if resp.status_code == 400:
         try:
