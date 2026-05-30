@@ -222,7 +222,7 @@ def run():
             return text
 
         def _send_discord_notification(url: str, content: str):
-            resp = requests.post(url, json={"content": content})
+            resp = requests.post(url, json={"content": content}, timeout=10)
             resp.raise_for_status()
 
         def get_specific_video_ids() -> list[str]:
@@ -562,6 +562,8 @@ def run():
                         session, permanent=True)
                     clock.waitUntil(currentLiveEnd)
                     break
+                quote.once(currentLiveId, nextVideoId, session)
+
                 if config_bool("DISCORD_ON_VIDEOINFO", default=False):
                     webhook = config("DISCORD_VIDEOINFO_WEBHOOK", default="") or config("LOGGING_DISCORD_WEBHOOK", default="")
                     if webhook:
@@ -587,7 +589,6 @@ def run():
                         live.showMessage(currentLiveId, broadcasterMessage, session)
                     except Exception as err:
                         logger.warning("放送者コメント動画情報送信に失敗しました: %s", err)
-                quote.once(currentLiveId, nextVideoId, session)
                 title = None
                 thumbnail_url = None
                 try:

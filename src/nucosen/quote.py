@@ -170,7 +170,7 @@ def checkNgTag(videoId: str, ngTags: set, ngTagsExact: set = None) -> bool:
 def getThumbInfo(videoId: str) -> Dict[str, Any]:
     url = "https://ext.nicovideo.jp/api/getthumbinfo/{0}"
     nicovideo_delay()
-    resp = get(url.format(videoId))
+    resp = get(url.format(videoId), timeout=10)
     resp.raise_for_status()
     videoThumbInfo = ET.fromstring(resp.text)
     error = videoThumbInfo.findtext("error")
