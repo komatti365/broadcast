@@ -91,7 +91,7 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
     url = "https://live2.nicovideo.jp/watch/{0}/operator_comment".format(liveId)
     payload = {"text": msg, "isPermanent": permanent}
     header = {"User-Agent": UserAgent}
-    resp = put(url, json=payload, headers=header, cookies=session.cookie)
+    resp = put(url, json=payload, headers=header, cookies=session.cookie, timeout=10)
 
     # NOTE - 調査中！
     if resp.status_code == 400:

@@ -222,7 +222,7 @@ def run():
             return text
 
         def _send_discord_notification(url: str, content: str):
-            resp = requests.post(url, json={"content": content})
+            resp = requests.post(url, json={"content": content}, timeout=10)
             resp.raise_for_status()
 
         def get_specific_video_ids() -> list[str]:
@@ -549,6 +549,21 @@ def run():
                                 logger.warning("スキップ通知のDiscord送信に失敗しました: %s", err)
 
                     continue
+                if datetime.now(timezone.utc) + videoInfo[1] > currentLiveEnd - timedelta(minutes=1):
+                    logger.info("引用アボート: 時間内に引用が終了しない見込みです")
+                    database.priorityEnqueueAsync(nextVideoId)
+                    quote.loop(
+                        currentLiveId, get_specific_video_ids()[CLOSING], session)
+                    database.clearNowPlaying()
+                    live.showMessage(
+                        currentLiveId,
+                        config("NUCOSEN_CLOSING_MESSAGE") or
+                        "この枠の放送は終了しました。\nご視聴ありがとうございました。",
+                        session, permanent=True)
+                    clock.waitUntil(currentLiveEnd)
+                    break
+                quote.once(currentLiveId, nextVideoId, session)
+
                 if config_bool("DISCORD_ON_VIDEOINFO", default=False):
                     webhook = config("DISCORD_VIDEOINFO_WEBHOOK", default="") or config("LOGGING_DISCORD_WEBHOOK", default="")
                     if webhook:
@@ -574,20 +589,6 @@ def run():
                         live.showMessage(currentLiveId, broadcasterMessage, session)
                     except Exception as err:
                         logger.warning("放送者コメント動画情報送信に失敗しました: %s", err)
-                if datetime.now(timezone.utc) + videoInfo[1] > currentLiveEnd - timedelta(minutes=1):
-                    logger.info("引用アボート: 時間内に引用が終了しない見込みです")
-                    database.priorityEnqueueAsync(nextVideoId)
-                    quote.loop(
-                        currentLiveId, get_specific_video_ids()[CLOSING], session)
-                    database.clearNowPlaying()
-                    live.showMessage(
-                        currentLiveId,
-                        config("NUCOSEN_CLOSING_MESSAGE") or
-                        "この枠の放送は終了しました。\nご視聴ありがとうございました。",
-                        session, permanent=True)
-                    clock.waitUntil(currentLiveEnd)
-                    break
-                quote.once(currentLiveId, nextVideoId, session)
                 title = None
                 thumbnail_url = None
                 try:
