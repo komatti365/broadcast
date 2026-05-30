@@ -93,12 +93,22 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
     header = {"User-Agent": UserAgent}
     resp = put(url, json=payload, headers=header, cookies=session.cookie, timeout=10)
 
-    # NOTE - 調査中！
     if resp.status_code == 400:
-        getLogger(__name__).error(
-            "現在調査中のエラーです。「Issue 141」と添えて次のエラーメッセージを開発者に報告してください。"
-        )
-        getLogger(__name__).error(resp.text)
+        try:
+            resp_json = resp.json()
+            error_code = resp_json.get("meta", {}).get("errorCode", "")
+        except Exception:
+            error_code = ""
+
+        if error_code == "TOO_MANY_ACCESS":
+            getLogger(__name__).warning(
+                "短時間に大量の投稿を行ったため、運営コメントの送信をスキップします: {0}".format(msg)
+            )
+            return
+        else:
+            error_msg = "運営コメントの送信で不明なエラーが発生しました: {0}".format(resp.text)
+            getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg)
 
     if resp.status_code == 401:
         session.login()
