@@ -106,9 +106,9 @@ def showMessage(liveId: str, msg: str, session: Session, *, permanent: bool = Fa
             )
             return
         else:
-            getLogger(__name__).error(
-                "運営コメントの送信で不明なエラーが発生しました: {0}".format(resp.text)
-            )
+            error_msg = "運営コメントの送信で不明なエラーが発生しました: {0}".format(resp.text)
+            getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg)
 
     if resp.status_code == 401:
         session.login()
