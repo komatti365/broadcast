@@ -39,7 +39,9 @@ jobs:
       - name: Install Antigravity CLI
         run: |
           # Antigravity CLIのインストール
-          npm install -g @google/antigravity-cli
+          curl -fsSL https://antigravity.google/cli/install.sh | bash
+          # パスを通す
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run Antigravity Autonomous Review
         env:
