@@ -52,9 +52,24 @@ jobs:
           agy run \
             --headless \
             --execute \
-            --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。問題がなければ、修正内容をまとめたドキュメント（Walkthrough）を作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。"
+            --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。問題がなければ、修正内容をまとめた詳細なレポートを 'walkthrough.md' というファイル名でルート直下に作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。"
+
+      - name: Check if Report Exists & Read Content
+        id: check_report
+        run: |
+          # walkthrough.md が存在するかチェック
+          if [ -f walkthrough.md ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            # PR本文用にレポート内容を環境変数に格納
+            echo "WALKTHROUGH_BODY<<EOF" >> $GITHUB_ENV
+            cat walkthrough.md >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Pull Request
+        if: steps.check_report.outputs.exists == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -63,9 +78,6 @@ jobs:
           body: |
             Antigravity AIエージェントによる定期自動コードレビューの結果です。
             
-            **エージェントの実行内容:**
-            - コードベースのバグ・脆弱性スキャン
-            - 修正コードの自動適用
-            - ローカル環境での検証（パス済み）
+            ## 📝 詳細なレビュー・修正結果
             
-            修正内容を確認の上、マージしてください。
+            ${{ env.WALKTHROUGH_BODY }}
