@@ -490,7 +490,7 @@ class RestDbIo(object):
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".replaceQueueWithPickup"))
     def replaceQueueWithPickup(self):
-        """pickup_queue テーブルの内容を queue テーブルに移し、pickup_queue を空にします。"""
+        """pickup_queue テーブルの内容を queue テーブルにコピーします。"""
         # 1. ピックアップキューを取得
         get_pickup_resp = get(self.__pickupQueueUrl + '?h={"$orderby": {"_id": 1}}', headers=self.__header)
         get_pickup_resp.raise_for_status()
@@ -519,8 +519,4 @@ class RestDbIo(object):
 
             post_queue_resp = post(self.__queueUrl, json=payload, headers=self.__header)
             post_queue_resp.raise_for_status()
-
-        # 4. pickup_queue をクリア
-        delete_pickup_resp = delete(self.__pickupQueueUrl + "/*?q={}", headers=self.__header)
-        delete_pickup_resp.raise_for_status()
 

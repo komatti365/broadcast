@@ -121,6 +121,9 @@ def start_pickup_preparer(database, session, config):
         
         while True:
             try:
+                # 1. 強制実行デバッグキーのチェック
+                force_prepare = config("PICKUP_FORCE_PREPARE", default="False").lower() in ("true", "1", "t", "y", "yes")
+
                 jst = timezone(timedelta(hours=9))
                 now = datetime.now(jst)
                 current_date = now.strftime("%Y-%m-%d")
@@ -135,55 +138,73 @@ def start_pickup_preparer(database, session, config):
                 # 本日の準備予定日時
                 scheduled_time = now.replace(hour=p_hour, minute=p_minute, second=0, microsecond=0)
                 
-                # 現在時刻が準備時刻を過ぎており、かつ本日まだ準備していなければ実行
-                if now >= scheduled_time and last_prepared_date != current_date:
-                    logger.info("新着ピックアップキューの準備を開始します。ターゲット時刻: %s", prepare_time_str)
-                    
-                    # パラメータ取得
-                    try:
-                        limit = max(1, int(config("PICKUP_LIMIT", default="10")))
-                    except ValueError:
-                        limit = 10
-                    try:
-                        max_age_hours = max(1, int(config("PICKUP_MAX_AGE_HOURS", default="24")))
-                    except ValueError:
-                        max_age_hours = 24
-                        
-                    # タグ・除外動画・過去履歴
-                    tags = config("REQTAGS").split(",")
-                    exact_tags = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
-                    category_tags = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
-                    genre_tags = [g.strip() for g in config("GENRE_TAGS", "").split(",") if g.strip()]
-                    
-                    ng_tags_set = set(config("NG_TAGS", "").split(","))
-                    ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
-                    
-                    existing_queue_ids = database.getQueueVideoIds()
-                    
-                    # 新着選出
-                    new_arrivals = personality.selectNewArrivals(
-                        tags=tags,
-                        session=session,
-                        limit=limit,
-                        ngTags=ng_tags_set,
-                        cooldownVideos=existing_queue_ids,
-                        categoryTags=category_tags,
-                        genreTags=genre_tags,
-                        exactTags=exact_tags,
-                        ngTagsExact=ng_tags_exact_set,
-                        maxAgeHours=max_age_hours
-                    )
-                    
-                    if new_arrivals:
-                        logger.info("新着動画 %d 件を検出しました: %s. pickup_queueに登録します。", len(new_arrivals), new_arrivals)
-                        database.clearPickupQueue()
-                        database.addPickupQueueItems(new_arrivals)
-                        logger.info("新着ピックアップキューの登録が完了しました。")
+                # 定期実行条件
+                should_prepare_periodic = (now >= scheduled_time and last_prepared_date != current_date)
+                
+                # 強制実行または定期実行のいずれかが真の場合に実行
+                if force_prepare or should_prepare_periodic:
+                    if force_prepare:
+                        logger.info("【デバッグ】新着ピックアップキューの強制準備要求（PICKUP_FORCE_PREPARE）を検知しました。")
                     else:
-                        logger.warning("新着動画が検出されませんでした。")
-                        
-                    last_prepared_date = current_date
+                        logger.info("新着ピックアップキューの準備を開始します。ターゲット時刻: %s", prepare_time_str)
                     
+                    try:
+                        # パラメータ取得
+                        try:
+                            limit = max(1, int(config("PICKUP_LIMIT", default="10")))
+                        except ValueError:
+                            limit = 10
+                        try:
+                            max_age_hours = max(1, int(config("PICKUP_MAX_AGE_HOURS", default="24")))
+                        except ValueError:
+                            max_age_hours = 24
+                            
+                        # タグ・除外動画・過去履歴
+                        tags = config("REQTAGS").split(",")
+                        exact_tags = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                        category_tags = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
+                        genre_tags = [g.strip() for g in config("GENRE_TAGS", "").split(",") if g.strip()]
+                        
+                        ng_tags_set = set(config("NG_TAGS", "").split(","))
+                        ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                        
+                        existing_queue_ids = database.getQueueVideoIds()
+                        
+                        # 新着選出
+                        new_arrivals = personality.selectNewArrivals(
+                            tags=tags,
+                            session=session,
+                            limit=limit,
+                            ngTags=ng_tags_set,
+                            cooldownVideos=existing_queue_ids,
+                            categoryTags=category_tags,
+                            genreTags=genre_tags,
+                            exactTags=exact_tags,
+                            ngTagsExact=ng_tags_exact_set,
+                            maxAgeHours=max_age_hours
+                        )
+                        
+                        if new_arrivals:
+                            logger.info("新着動画 %d 件を検出しました: %s. pickup_queueに登録します。", len(new_arrivals), new_arrivals)
+                            database.clearPickupQueue()
+                            database.addPickupQueueItems(new_arrivals)
+                            logger.info("新着ピックアップキューの登録が完了しました。")
+                        else:
+                            logger.warning("新着動画が検出されませんでした。")
+                            
+                        if not force_prepare:
+                            last_prepared_date = current_date
+                            
+                    finally:
+                        # 強制実行の場合は、終了後に自動的にオフ（False）に戻す
+                        if force_prepare:
+                            logger.info("【デバッグ】強制準備処理が完了しました。PICKUP_FORCE_PREPARE をオフにします。")
+                            try:
+                                database.publish_settings({"PICKUP_FORCE_PREPARE": "False"})
+                            except Exception as db_err:
+                                logger.error("DB設定の PICKUP_FORCE_PREPARE オフ更新に失敗しました: %s", db_err)
+                            os.environ["PICKUP_FORCE_PREPARE"] = "False"
+                            
             except Exception as err:
                 logger.error("新着ピックアップ準備スレッドでエラーが発生しました: %s", err)
                 
@@ -255,7 +276,7 @@ def run():
             "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE",
             "COOLDOWN_SIZE", "COOLDOWN_AFFECTS_REQUESTS",
             "PICKUP_PREPARE_TIME", "PICKUP_START_TIME", "PICKUP_END_TIME",
-            "PICKUP_LIMIT", "PICKUP_MODE_ACTIVE", "PICKUP_MAX_AGE_HOURS"
+            "PICKUP_LIMIT", "PICKUP_MODE_ACTIVE", "PICKUP_MAX_AGE_HOURS", "PICKUP_FORCE_PREPARE"
         }
         db_settings = database.get_settings()
         for key, value in db_settings.items():
@@ -296,6 +317,9 @@ def run():
 
         cooldownHistory = collections.deque(maxlen=max(0, config_int("COOLDOWN_SIZE", 50)))
         cooldown_lock = threading.Lock()
+
+        # 新着ピックアップの多重開始防止用（日付文字列, スロットインデックス）
+        last_started_slot = (None, None)
 
         def _build_video_info_message(template: str, info: dict) -> str:
             text = template.replace("\\n", "\n")
@@ -662,7 +686,7 @@ def run():
                 is_special = nextVideoId in get_specific_video_ids() or nextVideoId == config("OPENING_VIDEO_ID")
                 pickup_active = config("PICKUP_MODE_ACTIVE", "False").lower() in ("true", "1", "t", "y", "yes")
 
-                def get_pickup_slots() -> list[tuple[datetime, datetime]]:
+                def get_pickup_slots() -> list[tuple[datetime, datetime, int]]:
                     """PICKUP_START_TIME と PICKUP_END_TIME から本日（または跨ぎ）の複数の時間枠（UTC）のリストを生成します。"""
                     starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
                     ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
@@ -671,7 +695,7 @@ def run():
                     jst = timezone(timedelta(hours=9))
                     now_jst = datetime.now(jst)
                     
-                    for s_str, e_str in zip(starts, ends):
+                    for idx, (s_str, e_str) in enumerate(zip(starts, ends)):
                         try:
                             s_h, s_m = map(int, s_str.split(":"))
                             e_h, e_m = map(int, e_str.split(":"))
@@ -684,12 +708,12 @@ def run():
                         if end_jst < start_jst:
                             end_jst += timedelta(days=1)
                             
-                        slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)))
+                        slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc), idx))
                         
-                        # 前日開始のスロット（日またぎ時間枠における、日付変更直後の0:00〜終了時刻までの継続対応用）
+                        # 前日開始のスロット（日またぎ対応）
                         start_prev = start_jst - timedelta(days=1)
                         end_prev = end_jst - timedelta(days=1)
-                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc)))
+                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc), idx))
                     return slots
 
                 pickup_slots = get_pickup_slots()
@@ -699,14 +723,24 @@ def run():
                 # 1. 開始判定：「次の引用でピックアップモードのいずれかの開始時刻を超えそうになると」
                 if not pickup_active and not is_special:
                     active_slot = None
-                    for slot_start, slot_end in pickup_slots:
+                    active_slot_idx = None
+                    now_local = datetime.now()
+                    current_date = now_local.strftime("%Y-%m-%d")
+
+                    for slot_start, slot_end, idx in pickup_slots:
                         if now_utc < slot_end and target_end_time >= slot_start:
-                            active_slot = (slot_start, slot_end)
-                            break
+                            # 本日（または跨ぎの直近）すでに開始済みのスロットでなければ
+                            if last_started_slot != (current_date, idx):
+                                active_slot = (slot_start, slot_end)
+                                active_slot_idx = idx
+                                break
                             
                     if active_slot and database.getPickupQueueCount() > 0:
-                        logger.info("新着ピックアップモードの開始条件を検知しました。スロット: %s 〜 %s", active_slot[0], active_slot[1])
+                        logger.info("新着ピックアップモードの開始条件を検知しました。スロット [%d]: %s 〜 %s", active_slot_idx, active_slot[0], active_slot[1])
                         try:
+                            # 先に開始済みスロットを記録して、多重開始を防ぐ
+                            last_started_slot = (current_date, active_slot_idx)
+
                             # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
                             database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
                             os.environ["PICKUP_MODE_ACTIVE"] = "True"
@@ -721,6 +755,8 @@ def run():
                             database.replaceQueueWithPickup()
                         except Exception as e:
                             logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
+                            # 例外時は記録をリセット
+                            last_started_slot = (None, None)
                             try:
                                 # バックアップから通常キューを復元（ロールバック）
                                 database.restoreBackupQueue()
