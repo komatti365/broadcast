@@ -67,6 +67,7 @@ jobs:
           fi
 
       - name: Create Pull Request
+        if: steps.check_report.outputs.exists == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
