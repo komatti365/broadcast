@@ -667,9 +667,10 @@ def run():
                         h, m = map(int, time_str.split(":"))
                     except Exception:
                         h, m = 19, 0
-                    now_local = datetime.now()
-                    dt_local = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
-                    return dt_local.astimezone(timezone.utc)
+                    jst = timezone(timedelta(hours=9))
+                    now_jst = datetime.now(jst)
+                    dt_jst = now_jst.replace(hour=h, minute=m, second=0, microsecond=0)
+                    return dt_jst.astimezone(timezone.utc)
 
                 # 1. 開始判定：「次の引用でピックアップモード開始時刻を超えそうになると」
                 if not pickup_active and not is_special:
