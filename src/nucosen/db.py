@@ -17,6 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import random
 from logging import getLogger
 from os import getcwd
 from re import match
@@ -502,7 +503,6 @@ class RestDbIo(object):
 
         if pickups:
             # 毎回ランダムな順番でコピーするため、リストをシャッフルする
-            import random
             random.shuffle(pickups)
 
             # 3. queue テーブルへコピー
