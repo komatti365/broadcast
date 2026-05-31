@@ -47,12 +47,13 @@ jobs:
         env:
           ANTIGRAVITY_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AGY_DEBUG: 1
         run: |
           # エージェントへのミッション（指示）を出して実行
           agy run \
             --headless \
             --execute \
-            --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。問題がなければ、修正内容をまとめた詳細なレポートを 'walkthrough.md' というファイル名でルート直下に作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。"
+            --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。修正と検証が成功した場合は、その修正内容をまとめた詳細なレポートを 'walkthrough.md' というファイル名でルート直下に作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。問題が見つからなかった場合は、ファイル作成やブランチ作成などの操作は一切行わずにそのまま終了してください。"
 
       - name: Check if Report Exists & Read Content
         id: check_report
