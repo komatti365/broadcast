@@ -44,7 +44,7 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run Antigravity Autonomous Review
-        shell: 'script -q -e -c "bash {0}"'
+        shell: 'script -q -e -c "bash {0}" /dev/null < /dev/null'
         env:
           ANTIGRAVITY_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
