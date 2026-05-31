@@ -39,6 +39,7 @@ jobs:
       - name: Run Antigravity Autonomous Review using Python SDK
         env:
           ANTIGRAVITY_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGY_DEBUG: 1
         run: |
@@ -53,6 +54,10 @@ jobs:
           from google.antigravity import Agent, LocalAgentConfig
           
           async def main():
+              # ANTIGRAVITY_API_KEYをGEMINI_API_KEYに割り当てる
+              if 'ANTIGRAVITY_API_KEY' in os.environ and 'GEMINI_API_KEY' not in os.environ:
+                  os.environ['GEMINI_API_KEY'] = os.environ['ANTIGRAVITY_API_KEY']
+                  
               mission = (
                   'リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。'
                   '問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。'
@@ -61,8 +66,8 @@ jobs:
                   '問題が見つからなかった場合は、ファイル作成やブランチ作成などの操作は一切行わずにそのまま終了してください。'
               )
               
-              if not os.environ.get('ANTIGRAVITY_API_KEY'):
-                  print('Error: ANTIGRAVITY_API_KEY is not set', file=sys.stderr)
+              if not os.environ.get('GEMINI_API_KEY'):
+                  print('Error: GEMINI_API_KEY/ANTIGRAVITY_API_KEY is not set', file=sys.stderr)
                   sys.exit(1)
                   
               print('Starting Antigravity Agent using Python SDK...')
