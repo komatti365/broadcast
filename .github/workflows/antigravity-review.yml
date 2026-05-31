@@ -49,7 +49,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # エージェントへのミッション（指示）を出して実行
-          antigravity run \
+          agy run \
             --headless \
             --execute \
             --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。問題がなければ、修正内容をまとめたドキュメント（Walkthrough）を作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。"
