@@ -680,6 +680,11 @@ def run():
                         if database.getPickupQueueCount() > 0:
                             logger.info("新着ピックアップモードの開始条件を検知しました。キューのバックアップと入れ替えを行います。")
                             try:
+                                # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
+                                database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
+                                os.environ["PICKUP_MODE_ACTIVE"] = "True"
+                                pickup_active = True
+
                                 # 運営コメントで通知
                                 start_msg = "【運営からのお知らせ】次の動画より、前日のニコニコ新着動画をお届けする「新着ピックアップモード」を開始します！通常のリクエスト動画も割り込んで優先再生されます。"
                                 live.showMessage(currentLiveId, start_msg, session)
@@ -687,13 +692,21 @@ def run():
                                 # 現在のキューを退避し、新着ピックアップと入れ替え
                                 database.backupCurrentQueue()
                                 database.replaceQueueWithPickup()
-
-                                # フラグをアクティブに
-                                database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
-                                os.environ["PICKUP_MODE_ACTIVE"] = "True"
-                                pickup_active = True
                             except Exception as e:
-                                logger.error("新着ピックアップモードの開始処理に失敗しました: %s", e)
+                                logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
+                                try:
+                                    # バックアップから通常キューを復元（ロールバック）
+                                    database.restoreBackupQueue()
+                                except Exception as restore_err:
+                                    logger.critical("ロールバック中のキュー復元に失敗しました: %s", restore_err)
+                                
+                                # フラグを False に戻す
+                                try:
+                                    database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
+                                except Exception as db_err:
+                                    logger.error("ロールバック中のフラグ更新失敗: %s", db_err)
+                                os.environ["PICKUP_MODE_ACTIVE"] = "False"
+                                pickup_active = False
 
                 # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
                 elif pickup_active and not is_special:
@@ -712,13 +725,16 @@ def run():
 
                             # バックアップした通常キューを復元
                             database.restoreBackupQueue()
-
-                            # フラグを非アクティブに
-                            database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
+                        except Exception as e:
+                            logger.error("新着ピックアップモードの終了・キュー復元処理中に例外が発生しました: %s", e)
+                        finally:
+                            # 例外が発生した場合でも、放送継続を優先するため確実にフラグを False に戻して自動補充を再開する
+                            try:
+                                database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
+                            except Exception as db_err:
+                                logger.error("DB設定のPICKUP_MODE_ACTIVE更新に失敗しました: %s", db_err)
                             os.environ["PICKUP_MODE_ACTIVE"] = "False"
                             pickup_active = False
-                        except Exception as e:
-                            logger.error("新着ピックアップモードの終了処理に失敗しました: %s", e)
                 # ----------------------------------
 
                 quote.once(currentLiveId, nextVideoId, session)

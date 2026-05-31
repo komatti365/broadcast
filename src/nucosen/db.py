@@ -70,6 +70,12 @@ class RestDbIo(object):
         if not backupQueueUrl:
             backupQueueUrl = queueUrl.replace("/queue", "/backup_queue")
 
+        # 防御的バリデーション: 自動生成されたURLが本番キューURLと同一になっていないかチェック
+        if str(pickupQueueUrl) == str(queueUrl):
+            raise Exception("V0E 環境変数エラー: PICKUP_QUEUE_URL が本番キューURLと同一です。カスタムコレクション名を使用している場合は、個別に環境変数 PICKUP_QUEUE_URL を指定してください。")
+        if str(backupQueueUrl) == str(queueUrl):
+            raise Exception("V0E 環境変数エラー: BACKUP_QUEUE_URL が本番キューURLと同一です。カスタムコレクション名を使用している場合は、個別に環境変数 BACKUP_QUEUE_URL を指定してください。")
+
         self.__queueUrl = str(queueUrl)
         self.__requestUrl = str(requestUrl)
         self.__quotedUrl = quotedUrl
@@ -426,8 +432,11 @@ class RestDbIo(object):
         # 3. 取得したキューを backup_queue へコピー
         payload = []
         for q in queues:
+            video_id = q.get("videoId")
+            if not video_id:
+                continue
             data = {
-                "videoId": q["videoId"],
+                "videoId": video_id,
                 "priority": q.get("priority", False)
             }
             if q.get("title"):
@@ -459,8 +468,11 @@ class RestDbIo(object):
             # 3. queue テーブルへ書き戻し
             payload = []
             for b in backups:
+                video_id = b.get("videoId")
+                if not video_id:
+                    continue
                 data = {
-                    "videoId": b["videoId"],
+                    "videoId": video_id,
                     "priority": b.get("priority", False)
                 }
                 if b.get("title"):
@@ -492,8 +504,11 @@ class RestDbIo(object):
             # 3. queue テーブルへコピー
             payload = []
             for p in pickups:
+                video_id = p.get("videoId")
+                if not video_id:
+                    continue
                 data = {
-                    "videoId": p["videoId"],
+                    "videoId": video_id,
                     "priority": p.get("priority", False)
                 }
                 if p.get("title"):
