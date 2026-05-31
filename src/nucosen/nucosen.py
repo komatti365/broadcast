@@ -42,6 +42,12 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
         
         while True:
             try:
+                # ピックアップモードがアクティブな場合は自動補充をスキップ
+                if config("PICKUP_MODE_ACTIVE", default="False").lower() in ("true", "1", "t", "y", "yes"):
+                    logger.debug("新着ピックアップモードが有効なため、キューの自動補充をスキップします。")
+                    time.sleep(30)
+                    continue
+
                 # QUEUE_PRELOAD_SIZE の動的取得
                 try:
                     queuePreloadSize = max(1, int(config("QUEUE_PRELOAD_SIZE", "10")))
@@ -104,6 +110,90 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
     return t
 
 
+def start_pickup_preparer(database, session, config):
+    """新着ピックアップ用キューを準備するバックグラウンドスレッドを開始します。"""
+    def preparer_loop():
+        logger = getLogger(__name__ + ".pickup_preparer")
+        logger.info("バックグラウンドの新着ピックアップ準備スレッドを開始しました")
+        
+        # 多重実行防止用の本日準備済みフラグ
+        last_prepared_date = None
+        
+        while True:
+            try:
+                now = datetime.now()
+                current_date = now.strftime("%Y-%m-%d")
+                
+                # 設定の準備時刻をパース（デフォルト 05:00）
+                prepare_time_str = config("PICKUP_PREPARE_TIME", default="05:00")
+                try:
+                    p_hour, p_minute = map(int, prepare_time_str.split(":"))
+                except ValueError:
+                    p_hour, p_minute = 5, 0
+                    
+                # 本日の準備予定日時
+                scheduled_time = now.replace(hour=p_hour, minute=p_minute, second=0, microsecond=0)
+                
+                # 現在時刻が準備時刻を過ぎており、かつ本日まだ準備していなければ実行
+                if now >= scheduled_time and last_prepared_date != current_date:
+                    logger.info("新着ピックアップキューの準備を開始します。ターゲット時刻: %s", prepare_time_str)
+                    
+                    # パラメータ取得
+                    try:
+                        limit = max(1, int(config("PICKUP_LIMIT", default="10")))
+                    except ValueError:
+                        limit = 10
+                    try:
+                        max_age_hours = max(1, int(config("PICKUP_MAX_AGE_HOURS", default="24")))
+                    except ValueError:
+                        max_age_hours = 24
+                        
+                    # タグ・除外動画・過去履歴
+                    tags = config("REQTAGS").split(",")
+                    exact_tags = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                    category_tags = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
+                    genre_tags = [g.strip() for g in config("GENRE_TAGS", "").split(",") if g.strip()]
+                    
+                    ng_tags_set = set(config("NG_TAGS", "").split(","))
+                    ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                    
+                    existing_queue_ids = database.getQueueVideoIds()
+                    
+                    # 新着選出
+                    new_arrivals = personality.selectNewArrivals(
+                        tags=tags,
+                        session=session,
+                        limit=limit,
+                        ngTags=ng_tags_set,
+                        cooldownVideos=existing_queue_ids,
+                        categoryTags=category_tags,
+                        genreTags=genre_tags,
+                        exactTags=exact_tags,
+                        ngTagsExact=ng_tags_exact_set,
+                        maxAgeHours=max_age_hours
+                    )
+                    
+                    if new_arrivals:
+                        logger.info("新着動画 %d 件を検出しました: %s. pickup_queueに登録します。", len(new_arrivals), new_arrivals)
+                        database.clearPickupQueue()
+                        database.addPickupQueueItems(new_arrivals)
+                        logger.info("新着ピックアップキューの登録が完了しました。")
+                    else:
+                        logger.warning("新着動画が検出されませんでした。")
+                        
+                    last_prepared_date = current_date
+                    
+            except Exception as err:
+                logger.error("新着ピックアップ準備スレッドでエラーが発生しました: %s", err)
+                
+            # 60秒ごとに確認
+            time.sleep(60)
+
+    t = threading.Thread(target=preparer_loop, name="PickupPreparer", daemon=True)
+    t.start()
+    return t
+
+
 def start_settings_reloader(database, settings_keys, config, logger):
     """DB設定をバックグラウンドスレッドで定期的に再ロードし、環境変数に反映する reloader を開始します。"""
     def reloader_loop():
@@ -162,7 +252,9 @@ def run():
             "MAIN_VOLUME", "SUB_VOLUME", "DURATION_OVERWRITE",
             "QUOTE_LAYOUT",
             "NICO_REQUEST_DELAY", "NUCOSEN_AUTO_RESERVE",
-            "COOLDOWN_SIZE", "COOLDOWN_AFFECTS_REQUESTS"
+            "COOLDOWN_SIZE", "COOLDOWN_AFFECTS_REQUESTS",
+            "PICKUP_PREPARE_TIME", "PICKUP_START_TIME", "PICKUP_END_TIME",
+            "PICKUP_LIMIT", "PICKUP_MODE_ACTIVE", "PICKUP_MAX_AGE_HOURS"
         }
         db_settings = database.get_settings()
         for key, value in db_settings.items():
@@ -310,6 +402,9 @@ def run():
 
         # バックグラウンドでキュー監視・補充スレッドを起動
         start_queue_preloader(database, session, cooldownHistory, cooldown_lock, config)
+
+        # バックグラウンドで新着ピックアップキュー準備スレッドを起動
+        start_pickup_preparer(database, session, config)
 
         # バックグラウンドでDB設定の定期更新スレッドを起動
         start_settings_reloader(database, settings_keys, config, logger)
@@ -562,6 +657,68 @@ def run():
                         session, permanent=True)
                     clock.waitUntil(currentLiveEnd)
                     break
+                # --- 新着ピックアップモード制御 ---
+                is_special = nextVideoId in get_specific_video_ids() or nextVideoId == config("OPENING_VIDEO_ID")
+                pickup_active = config("PICKUP_MODE_ACTIVE", "False").lower() in ("true", "1", "t", "y", "yes")
+
+                def time_to_datetime_utc(time_str: str) -> datetime:
+                    try:
+                        h, m = map(int, time_str.split(":"))
+                    except Exception:
+                        h, m = 19, 0
+                    now_local = datetime.now()
+                    dt_local = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
+                    return dt_local.astimezone(timezone.utc)
+
+                # 1. 開始判定：「次の引用でピックアップモード開始時刻を超えそうになると」
+                if not pickup_active and not is_special:
+                    pickup_start_utc = time_to_datetime_utc(config("PICKUP_START_TIME", "19:00"))
+                    if (datetime.now(timezone.utc) + videoInfo[1]) >= pickup_start_utc:
+                        # 準備されたピックアップ動画が存在するか確認
+                        if database.getPickupQueueCount() > 0:
+                            logger.info("新着ピックアップモードの開始条件を検知しました。キューのバックアップと入れ替えを行います。")
+                            try:
+                                # 運営コメントで通知
+                                start_msg = "【運営からのお知らせ】次の動画より、前日のニコニコ新着動画をお届けする「新着ピックアップモード」を開始します！通常のリクエスト動画も割り込んで優先再生されます。"
+                                live.showMessage(currentLiveId, start_msg, session)
+
+                                # 現在のキューを退避し、新着ピックアップと入れ替え
+                                database.backupCurrentQueue()
+                                database.replaceQueueWithPickup()
+
+                                # フラグをアクティブに
+                                database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
+                                os.environ["PICKUP_MODE_ACTIVE"] = "True"
+                                pickup_active = True
+                            except Exception as e:
+                                logger.error("新着ピックアップモードの開始処理に失敗しました: %s", e)
+
+                # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
+                elif pickup_active and not is_special:
+                    pickup_end_utc = time_to_datetime_utc(config("PICKUP_END_TIME", "21:00"))
+                    remaining_queue_count = database.getQueueCount() # デキュー済みのため残りの件数
+
+                    is_end_time_over = (datetime.now(timezone.utc) + videoInfo[1]) >= pickup_end_utc
+                    is_last_pickup_video = (remaining_queue_count == 0)
+
+                    if is_end_time_over or is_last_pickup_video:
+                        logger.info("新着ピックアップモードの終了条件を検知しました。キューの復元を行います。")
+                        try:
+                            # 運営コメントで通知
+                            end_msg = "【運営からのお知らせ】この動画をもちまして「新着ピックアップモード」を終了し、通常運用（通常リクエストおよびランダム再生）に戻ります。ご視聴ありがとうございました！"
+                            live.showMessage(currentLiveId, end_msg, session)
+
+                            # バックアップした通常キューを復元
+                            database.restoreBackupQueue()
+
+                            # フラグを非アクティブに
+                            database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
+                            os.environ["PICKUP_MODE_ACTIVE"] = "False"
+                            pickup_active = False
+                        except Exception as e:
+                            logger.error("新着ピックアップモードの終了処理に失敗しました: %s", e)
+                # ----------------------------------
+
                 quote.once(currentLiveId, nextVideoId, session)
 
                 if config_bool("DISCORD_ON_VIDEOINFO", default=False):

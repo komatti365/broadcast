@@ -62,11 +62,21 @@ class RestDbIo(object):
                 queueUrl, requestUrl, key))
         header = {'x-apikey': str(key), 'cache-control': "no-cache"}
 
+        pickupQueueUrl = config("PICKUP_QUEUE_URL", default=None)
+        if not pickupQueueUrl:
+            pickupQueueUrl = queueUrl.replace("/queue", "/pickup_queue")
+
+        backupQueueUrl = config("BACKUP_QUEUE_URL", default=None)
+        if not backupQueueUrl:
+            backupQueueUrl = queueUrl.replace("/queue", "/backup_queue")
+
         self.__queueUrl = str(queueUrl)
         self.__requestUrl = str(requestUrl)
         self.__quotedUrl = quotedUrl
         self.__settingsUrl = config("SETTINGS_URL", default=None)
         self.__nowplayingUrl = config("NOWPLAYING_URL", default=None)
+        self.__pickupQueueUrl = str(pickupQueueUrl)
+        self.__backupQueueUrl = str(backupQueueUrl)
         self.__header = header
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db_async")
 
@@ -358,4 +368,144 @@ class RestDbIo(object):
         """非同期で優先エンキュー処理を行います。"""
         future = self._executor.submit(self.priorityEnqueue, item)
         future.add_done_callback(self._async_callback)
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".getPickupQueueCount"))
+    def getPickupQueueCount(self) -> int:
+        resp = get(self.__pickupQueueUrl + '?h={"$fields":{"videoId":1}}', headers=self.__header)
+        resp.raise_for_status()
+        items = resp.json()
+        return len(items)
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".clearPickupQueue"))
+    def clearPickupQueue(self):
+        resp = delete(self.__pickupQueueUrl + "/*?q={}", headers=self.__header)
+        resp.raise_for_status()
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".addPickupQueueItems"))
+    def addPickupQueueItems(self, items: List[str]):
+        """新着ピックアップキューに動画を登録します。"""
+        if not items:
+            return
+        payload = []
+        from nucosen.quote import getThumbInfo
+        for item in items:
+            title = None
+            thumbnailUrl = None
+            try:
+                videoDetail = getThumbInfo(item)
+                title = videoDetail.get("title")
+                thumbnailUrl = videoDetail.get("thumbnail_url")
+            except Exception as e:
+                getLogger(__name__).warning("ピックアップ動画情報取得失敗 ({0}): {1}".format(item, e))
+                
+            data = {"videoId": item, "priority": False}
+            if title:
+                data["title"] = title
+            if thumbnailUrl:
+                data["thumbnailUrl"] = thumbnailUrl
+            payload.append(data)
+            
+        resp = post(self.__pickupQueueUrl, json=payload, headers=self.__header)
+        resp.raise_for_status()
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".backupCurrentQueue"))
+    def backupCurrentQueue(self):
+        """現在の queue テーブルを全退避し、queue テーブルを空にします。"""
+        # 1. バックアップ先のクリア
+        delete_backup_resp = delete(self.__backupQueueUrl + "/*?q={}", headers=self.__header)
+        delete_backup_resp.raise_for_status()
+
+        # 2. 現在のキューを全取得
+        get_queue_resp = get(self.__queueUrl + '?h={"$orderby": {"priority": -1, "_id": 1}}', headers=self.__header)
+        get_queue_resp.raise_for_status()
+        queues = get_queue_resp.json()
+
+        if not queues:
+            return
+
+        # 3. 取得したキューを backup_queue へコピー
+        payload = []
+        for q in queues:
+            data = {
+                "videoId": q["videoId"],
+                "priority": q.get("priority", False)
+            }
+            if q.get("title"):
+                data["title"] = q["title"]
+            if q.get("thumbnailUrl"):
+                data["thumbnailUrl"] = q["thumbnailUrl"]
+            payload.append(data)
+
+        post_backup_resp = post(self.__backupQueueUrl, json=payload, headers=self.__header)
+        post_backup_resp.raise_for_status()
+
+        # 4. 元のキューを空にする
+        delete_queue_resp = delete(self.__queueUrl + "/*?q={}", headers=self.__header)
+        delete_queue_resp.raise_for_status()
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".restoreBackupQueue"))
+    def restoreBackupQueue(self):
+        """backup_queue テーブルの内容を queue テーブルに戻し、backup_queue を空にします。"""
+        # 1. バックアップされているキューの取得
+        get_backup_resp = get(self.__backupQueueUrl + '?h={"$orderby": {"_id": 1}}', headers=self.__header)
+        get_backup_resp.raise_for_status()
+        backups = get_backup_resp.json()
+
+        # 2. queue テーブルをクリア（すでに一部消化されて空になっているはずですが、念のため）
+        delete_queue_resp = delete(self.__queueUrl + "/*?q={}", headers=self.__header)
+        delete_queue_resp.raise_for_status()
+
+        if backups:
+            # 3. queue テーブルへ書き戻し
+            payload = []
+            for b in backups:
+                data = {
+                    "videoId": b["videoId"],
+                    "priority": b.get("priority", False)
+                }
+                if b.get("title"):
+                    data["title"] = b["title"]
+                if b.get("thumbnailUrl"):
+                    data["thumbnailUrl"] = b["thumbnailUrl"]
+                payload.append(data)
+
+            post_queue_resp = post(self.__queueUrl, json=payload, headers=self.__header)
+            post_queue_resp.raise_for_status()
+
+        # 4. backup_queue をクリア
+        delete_backup_resp = delete(self.__backupQueueUrl + "/*?q={}", headers=self.__header)
+        delete_backup_resp.raise_for_status()
+
+    @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".replaceQueueWithPickup"))
+    def replaceQueueWithPickup(self):
+        """pickup_queue テーブルの内容を queue テーブルに移し、pickup_queue を空にします。"""
+        # 1. ピックアップキューを取得
+        get_pickup_resp = get(self.__pickupQueueUrl + '?h={"$orderby": {"_id": 1}}', headers=self.__header)
+        get_pickup_resp.raise_for_status()
+        pickups = get_pickup_resp.json()
+
+        # 2. queue テーブルをクリア
+        delete_queue_resp = delete(self.__queueUrl + "/*?q={}", headers=self.__header)
+        delete_queue_resp.raise_for_status()
+
+        if pickups:
+            # 3. queue テーブルへコピー
+            payload = []
+            for p in pickups:
+                data = {
+                    "videoId": p["videoId"],
+                    "priority": p.get("priority", False)
+                }
+                if p.get("title"):
+                    data["title"] = p["title"]
+                if p.get("thumbnailUrl"):
+                    data["thumbnailUrl"] = p["thumbnailUrl"]
+                payload.append(data)
+
+            post_queue_resp = post(self.__queueUrl, json=payload, headers=self.__header)
+            post_queue_resp.raise_for_status()
+
+        # 4. pickup_queue をクリア
+        delete_pickup_resp = delete(self.__pickupQueueUrl + "/*?q={}", headers=self.__header)
+        delete_pickup_resp.raise_for_status()
 
