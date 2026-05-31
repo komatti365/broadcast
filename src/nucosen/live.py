@@ -139,6 +139,12 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
     starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
     ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
     
+    if len(starts) != len(ends):
+        getLogger(__name__).warning(
+            "設定エラー: PICKUP_START_TIME (要素数 %d) と PICKUP_END_TIME (要素数 %d) の数が一致しません。短い方に合わせて処理されます。",
+            len(starts), len(ends)
+        )
+    
     pickup_ranges = []
     for s, e in zip(starts, ends):
         pickup_ranges.append(f"{s}〜{e}")
