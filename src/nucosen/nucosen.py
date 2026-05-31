@@ -121,7 +121,8 @@ def start_pickup_preparer(database, session, config):
         
         while True:
             try:
-                now = datetime.now()
+                jst = timezone(timedelta(hours=9))
+                now = datetime.now(jst)
                 current_date = now.strftime("%Y-%m-%d")
                 
                 # 設定の準備時刻をパース（デフォルト 05:00）
