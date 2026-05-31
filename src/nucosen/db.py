@@ -490,7 +490,7 @@ class RestDbIo(object):
 
     @retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".replaceQueueWithPickup"))
     def replaceQueueWithPickup(self):
-        """pickup_queue テーブルの内容を queue テーブルにコピーします。"""
+        """pickup_queue テーブルの内容を queue テーブルにランダムな順序でコピーします。"""
         # 1. ピックアップキューを取得
         get_pickup_resp = get(self.__pickupQueueUrl + '?h={"$orderby": {"_id": 1}}', headers=self.__header)
         get_pickup_resp.raise_for_status()
@@ -501,6 +501,10 @@ class RestDbIo(object):
         delete_queue_resp.raise_for_status()
 
         if pickups:
+            # 毎回ランダムな順番でコピーするため、リストをシャッフルする
+            import random
+            random.shuffle(pickups)
+
             # 3. queue テーブルへコピー
             payload = []
             for p in pickups:
