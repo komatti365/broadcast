@@ -1,0 +1,64 @@
+name: Scheduled Bug Check via Antigravity
+
+on:
+  schedule:
+    # 毎日 日本時間 午前2:00（UTC 17:00）に自動実行
+    - cron: '0 17 * * *'
+  workflow_dispatch: # 必要に応じて手動でも実行可能に
+
+jobs:
+  antigravity-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # すべてのGit履歴を取得（エージェントの推論に役立ちます）
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # プロジェクトの言語環境に合わせて設定（例: Python, Go等）
+
+      - name: Install Project Dependencies
+        run: |
+          # エージェントがテストを動かせるよう、あらかじめ依存関係をインストール
+          npm ci 
+
+      - name: Install Antigravity CLI
+        run: |
+          # Antigravity CLIのインストール（※実際のパッケージ名やコマンドに置き換えてください）
+          npm install -g @google/antigravity-cli
+
+      - name: Run Antigravity Autonomous Review
+        env:
+          ANTIGRAVITY_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # エージェントへのミッション（指示）を出して実行
+          # --head-less: 画面なしモード
+          # --execute: ターミナル操作やテスト実行を許可
+          antigravity run \
+            --headless \
+            --execute \
+            --mission "リポジトリ内のコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、必ず 'npm test' を実行してテストが通ることを確認してください。テストが成功したら、修正内容をまとめたドキュメント（Walkthrough）を作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "ai-bugfix-antigravity"
+          title: "🤖【Antigravity】定期自動バグ修正・検証済みPR"
+          body: |
+            Antigravity AIエージェントによる定期自動コードレビューの結果です。
+            
+            **エージェントの実行内容:**
+            - コードベースのバグ・脆弱性スキャン
+            - 修正コードの自動適用
+            - ローカル環境でのテスト実行（パス済み）
+            
+            修正内容を確認の上、マージしてください。
