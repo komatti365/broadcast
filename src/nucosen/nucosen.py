@@ -667,19 +667,29 @@ def run():
                     starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
                     ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
                     slots = []
+                    
+                    jst = timezone(timedelta(hours=9))
+                    now_jst = datetime.now(jst)
+                    
                     for s_str, e_str in zip(starts, ends):
                         try:
                             s_h, s_m = map(int, s_str.split(":"))
                             e_h, e_m = map(int, e_str.split(":"))
                         except Exception:
                             continue
-                        jst = timezone(timedelta(hours=9))
-                        now_jst = datetime.now(jst)
+                        
+                        # 当日開始のスロット
                         start_jst = now_jst.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
                         end_jst = now_jst.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
                         if end_jst < start_jst:
                             end_jst += timedelta(days=1)
+                            
                         slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)))
+                        
+                        # 前日開始のスロット（日またぎ時間枠における、日付変更直後の0:00〜終了時刻までの継続対応用）
+                        start_prev = start_jst - timedelta(days=1)
+                        end_prev = end_jst - timedelta(days=1)
+                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc)))
                     return slots
 
                 pickup_slots = get_pickup_slots()
