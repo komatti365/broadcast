@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pyotp import TOTP
 import httpx
+from requests.cookies import RequestsCookieJar
 from retry import retry
 from decouple import AutoConfig
 from os import getcwd
@@ -33,7 +34,8 @@ class ReLoginRequested(Exception):
     pass
 
 config = AutoConfig(getcwd())
-NetworkErrors = (httpx.ConnectError, httpx.HTTPStatusError, ReLoginRequested)
+# レビュー3: トランスポート層の全エラーに対応するため httpx.RequestError を指定
+NetworkErrors = (httpx.RequestError, httpx.HTTPStatusError, ReLoginRequested)
 UserAgent = str(config("NUCOSEN_UA_PREFIX", default="anonymous")
                 ) + " / NUCOSen Automatic Login"
 
@@ -44,7 +46,8 @@ class Session(object):
     mfa_token: str
 
     user_agent: str = UserAgent
-    cookie: Optional[httpx.Cookies] = None
+    # レビュー2: requests を使う live.py / quote.py との完全なCookie受け渡し互換性を維持するため、RequestsCookieJar に戻します
+    cookie: Optional[RequestsCookieJar] = None
 
     @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".login"))
     def login(self):
@@ -63,8 +66,12 @@ class Session(object):
                 follow_redirects=False
             )
             resp.raise_for_status()
+            # レビュー4: resp.cookies はすでに httpx.Cookies なので余計な再ラップを排します。
+            # さらに、他モジュールが期待する RequestsCookieJar に変換して格納します。
             if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
-                self.cookie = httpx.Cookies(resp.cookies)
+                jar = RequestsCookieJar()
+                jar.update(client.cookies)
+                self.cookie = jar
                 getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
                 self._auto_save_cookie()
                 return
@@ -86,7 +93,10 @@ class Session(object):
             getLogger(__name__).error(f"MFAトークン (NICO_TFA) のデコードに失敗しました。Base32形式が正しいか確認してください: {e}")
             raise ReLoginRequested("V40 MFA失敗 (トークン不正)")
         tfac = TOTP(self.mfa_token)
-        current_cookies = httpx.Cookies(resp.cookies)
+        
+        # 既存のCookieをhttpx.Cookiesとして展開し、セッションを開始
+        current_cookies = httpx.Cookies()
+        current_cookies.update(resp.cookies)
 
         with httpx.Client(cookies=current_cookies) as client:
             mfaResp = client.post(
@@ -99,7 +109,6 @@ class Session(object):
                 follow_redirects=False,
             )
             mfaResp.raise_for_status()
-            current_cookies.update(mfaResp.cookies)
             
             final_resp = client.get(
                 mfaResp.headers["Location"],
@@ -107,10 +116,14 @@ class Session(object):
                 follow_redirects=False
             )
             final_resp.raise_for_status()
-            current_cookies.update(final_resp.cookies)
+            
+            # レビュー5: クライアント経由で自動マージされた最新のCookie一覧を取得
+            updated_cookies = client.cookies
 
-        if "user_session" in current_cookies and current_cookies.get("user_session") not in ("deleted", ""):
-            self.cookie = current_cookies
+        if "user_session" in updated_cookies and updated_cookies.get("user_session") not in ("deleted", ""):
+            jar = RequestsCookieJar()
+            jar.update(updated_cookies)
+            self.cookie = jar
             getLogger(__name__).info("ユーザー名/パスワード（MFA付き）によるログイン成功")
             self._auto_save_cookie()
             return
@@ -128,6 +141,7 @@ class Session(object):
         # NOTE - X-niconico-sessionなどに使用
         if self.cookie is None:
             return None
+        # RequestsCookieJar は __contains__ をサポートしているためそのまま判定可能です
         if "user_session" not in self.cookie:
             return None
         return self.cookie["user_session"]
@@ -137,11 +151,11 @@ class Session(object):
         """Create a Session using an existing `user_session` access token.
 
         This avoids performing a login with username/password and MFA.
-        The provided token is placed into a httpx.Cookies so existing
+        The provided token is placed into a RequestsCookieJar so existing
         code that relies on `session.cookie` continues to work.
         """
         session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
-        jar = httpx.Cookies()
+        jar = RequestsCookieJar()
         jar.set("user_session", access_token, domain=".nicovideo.jp", path="/")
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
@@ -155,7 +169,8 @@ class Session(object):
         if self.cookie is None:
             getLogger(__name__).warning("クッキーが空のため保存できませんでした")
             return
-        data = {name: value for name, value in self.cookie.items()}
+        # レビュー6: dict() によるシンプルでPythonicな辞書変換に変更します
+        data = dict(self.cookie)
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w", encoding="utf-8") as f:
@@ -181,11 +196,12 @@ class Session(object):
             raise ValueError(f"クッキーファイルのJSON形式が不正です: {path} ({e})")
         if not isinstance(data, dict):
             raise ValueError(f"クッキーファイルは辞書形式である必要があります: {path}")
-        jar = httpx.Cookies()
+        jar = RequestsCookieJar()
         for name, value in data.items():
             jar.set(name, value, domain=".nicovideo.jp", path="/")
         session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
         return session
+
 
