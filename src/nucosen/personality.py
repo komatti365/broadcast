@@ -198,13 +198,14 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
     from datetime import datetime, timezone, timedelta
     
     # 直近のAPI更新時刻（朝5:00）を算出
-    now_local = datetime.now()
-    latest_update_local = now_local.replace(hour=5, minute=0, second=0, microsecond=0)
-    if now_local < latest_update_local:
-        latest_update_local = latest_update_local - timedelta(days=1)
+    jst = timezone(timedelta(hours=9))
+    now_jst = datetime.now(jst)
+    latest_update_jst = now_jst.replace(hour=5, minute=0, second=0, microsecond=0)
+    if now_jst < latest_update_jst:
+        latest_update_jst = latest_update_jst - timedelta(days=1)
         
-    lte_str = latest_update_local.astimezone(timezone.utc).isoformat()
-    gte_time = latest_update_local - timedelta(hours=maxAgeHours)
+    lte_str = latest_update_jst.astimezone(timezone.utc).isoformat()
+    gte_time = latest_update_jst - timedelta(hours=maxAgeHours)
     gte_str = gte_time.astimezone(timezone.utc).isoformat()
 
     for tag, target_type in search_targets:
