@@ -24,10 +24,7 @@ import json
 from pathlib import Path
 
 from pyotp import TOTP
-from requests import Response, get, post
-from requests.cookies import RequestsCookieJar
-from requests.exceptions import ConnectionError as ConnError
-from requests.exceptions import HTTPError
+import httpx
 from retry import retry
 from decouple import AutoConfig
 from os import getcwd
@@ -36,7 +33,7 @@ class ReLoginRequested(Exception):
     pass
 
 config = AutoConfig(getcwd())
-NetworkErrors = (ConnError, HTTPError, ReLoginRequested)
+NetworkErrors = (httpx.ConnectError, httpx.HTTPStatusError, ReLoginRequested)
 UserAgent = str(config("NUCOSEN_UA_PREFIX", default="anonymous")
                 ) + " / NUCOSen Automatic Login"
 
@@ -47,7 +44,7 @@ class Session(object):
     mfa_token: str
 
     user_agent: str = UserAgent
-    cookie: Optional[RequestsCookieJar] = None
+    cookie: Optional[httpx.Cookies] = None
 
     @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".login"))
     def login(self):
@@ -55,28 +52,29 @@ class Session(object):
             "User-Agent": self.user_agent,
             "Content-Type": "application/x-www-form-urlencoded"
         }
-        resp = post(
-            "https://account.nicovideo.jp/login/redirector",
-            {
-                "mail_tel": self.mail_tel,
-                "password": self.password
-            },
-            headers=header,
-            allow_redirects=False
-        )
-        resp.raise_for_status()
-        if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
-            self.cookie = resp.cookies
-            getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
-            self._auto_save_cookie()
-            return
-        if "mfa_session" in resp.cookies:
-            self.__mfa_login(resp, header)
-            getLogger(__name__).info("MFA成功")
-            return
-        raise ReLoginRequested("L15 ログイン失敗")
+        with httpx.Client() as client:
+            resp = client.post(
+                "https://account.nicovideo.jp/login/redirector",
+                data={
+                    "mail_tel": self.mail_tel,
+                    "password": self.password
+                },
+                headers=header,
+                follow_redirects=False
+            )
+            resp.raise_for_status()
+            if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
+                self.cookie = httpx.Cookies(resp.cookies)
+                getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
+                self._auto_save_cookie()
+                return
+            if "mfa_session" in resp.cookies:
+                self.__mfa_login(resp, header)
+                getLogger(__name__).info("MFA成功")
+                return
+            raise ReLoginRequested("L15 ログイン失敗")
 
-    def __mfa_login(self, resp: Response, header):
+    def __mfa_login(self, resp: httpx.Response, header):
         if not self.mfa_token:
             getLogger(__name__).error("ニコニコ動画で2段階認証が要求されましたが、NICO_TFA (MFAトークン) が設定されていません。")
             raise ReLoginRequested("V40 MFA失敗 (トークン未設定)")
@@ -88,30 +86,28 @@ class Session(object):
             getLogger(__name__).error(f"MFAトークン (NICO_TFA) のデコードに失敗しました。Base32形式が正しいか確認してください: {e}")
             raise ReLoginRequested("V40 MFA失敗 (トークン不正)")
         tfac = TOTP(self.mfa_token)
-        current_cookies = RequestsCookieJar()
-        current_cookies.update(resp.cookies)
+        current_cookies = httpx.Cookies(resp.cookies)
 
-        mfaResp = post(
-            resp.headers["Location"],
-            {
-                "otp": tfac.now(),
-                "is_mfa_trusted_device": "false",
-            },
-            headers=header,
-            cookies=current_cookies,
-            allow_redirects=False,
-        )
-        mfaResp.raise_for_status()
-        current_cookies.update(mfaResp.cookies)
-        
-        final_resp = get(
-            mfaResp.headers["Location"],
-            headers={"User-Agent": self.user_agent},
-            cookies=current_cookies,
-            allow_redirects=False
-        )
-        final_resp.raise_for_status()
-        current_cookies.update(final_resp.cookies)
+        with httpx.Client(cookies=current_cookies) as client:
+            mfaResp = client.post(
+                resp.headers["Location"],
+                data={
+                    "otp": tfac.now(),
+                    "is_mfa_trusted_device": "false",
+                },
+                headers=header,
+                follow_redirects=False,
+            )
+            mfaResp.raise_for_status()
+            current_cookies.update(mfaResp.cookies)
+            
+            final_resp = client.get(
+                mfaResp.headers["Location"],
+                headers={"User-Agent": self.user_agent},
+                follow_redirects=False
+            )
+            final_resp.raise_for_status()
+            current_cookies.update(final_resp.cookies)
 
         if "user_session" in current_cookies and current_cookies.get("user_session") not in ("deleted", ""):
             self.cookie = current_cookies
@@ -131,9 +127,9 @@ class Session(object):
     def getSessionString(self) -> Optional[str]:
         # NOTE - X-niconico-sessionなどに使用
         if self.cookie is None:
-            return
+            return None
         if "user_session" not in self.cookie:
-            return
+            return None
         return self.cookie["user_session"]
 
     @classmethod
@@ -141,11 +137,11 @@ class Session(object):
         """Create a Session using an existing `user_session` access token.
 
         This avoids performing a login with username/password and MFA.
-        The provided token is placed into a RequestsCookieJar so existing
+        The provided token is placed into a httpx.Cookies so existing
         code that relies on `session.cookie` continues to work.
         """
         session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
-        jar = RequestsCookieJar()
+        jar = httpx.Cookies()
         jar.set("user_session", access_token, domain=".nicovideo.jp", path="/")
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
@@ -159,7 +155,7 @@ class Session(object):
         if self.cookie is None:
             getLogger(__name__).warning("クッキーが空のため保存できませんでした")
             return
-        data = {c.name: c.value for c in self.cookie}
+        data = {name: value for name, value in self.cookie.items()}
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w", encoding="utf-8") as f:
@@ -185,10 +181,11 @@ class Session(object):
             raise ValueError(f"クッキーファイルのJSON形式が不正です: {path} ({e})")
         if not isinstance(data, dict):
             raise ValueError(f"クッキーファイルは辞書形式である必要があります: {path}")
-        jar = RequestsCookieJar()
+        jar = httpx.Cookies()
         for name, value in data.items():
             jar.set(name, value, domain=".nicovideo.jp", path="/")
         session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
         return session
+
