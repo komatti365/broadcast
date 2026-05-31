@@ -55,18 +55,16 @@ jobs:
             --execute \
             --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。修正と検証が成功した場合は、その修正内容をまとめた詳細なレポートを 'walkthrough.md' というファイル名でルート直下に作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。問題が見つからなかった場合は、ファイル作成やブランチ作成などの操作は一切行わずにそのまま終了してください。"
 
-      - name: Check if Report Exists & Read Content
-        id: check_report
+      - name: Read Walkthrough Report
+        id: read_report
         run: |
-          # walkthrough.md が存在するかチェック
+          # walkthrough.md が存在する場合、その内容をPRのBody用の環境変数に格納
           if [ -f walkthrough.md ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            # PR本文用にレポート内容を環境変数に格納
             echo "WALKTHROUGH_BODY<<EOF" >> $GITHUB_ENV
             cat walkthrough.md >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "WALKTHROUGH_BODY=⚠️ 自動レビューは完了しましたが、詳細な walkthrough.md レポートは生成されませんでした。" >> $GITHUB_ENV
           fi
 
       - name: Create Pull Request
