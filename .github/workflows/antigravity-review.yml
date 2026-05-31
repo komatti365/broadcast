@@ -36,25 +36,46 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Install Antigravity CLI
-        run: |
-          # Antigravity CLIのインストール
-          curl -fsSL https://antigravity.google/cli/install.sh | bash
-          # パスを通す
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Run Antigravity Autonomous Review
-        shell: 'script -q -e -c "bash {0}" /dev/null < /dev/null'
+      - name: Run Antigravity Autonomous Review using Python SDK
         env:
           ANTIGRAVITY_API_KEY: ${{ secrets.ANTIGRAVITY_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGY_DEBUG: 1
         run: |
-          # エージェントへのミッション（指示）を出して実行
-          agy run \
-            --headless \
-            --execute \
-            --mission "リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。修正と検証が成功した場合は、その修正内容をまとめた詳細なレポートを 'walkthrough.md' というファイル名でルート直下に作成し、'ai-bugfix-antigravity' という新しいGitブランチを作成して変更をコミット・プッシュしてください。問題が見つからなかった場合は、ファイル作成やブランチ作成などの操作は一切行わずにそのまま終了してください。"
+          # SDKのインストール
+          pip install google-antigravity
+          
+          # Python SDKを使用してエージェントを実行
+          python -c "
+          import asyncio
+          import os
+          import sys
+          from google.antigravity import Agent, LocalAgentConfig
+          
+          async def main():
+              mission = (
+                  'リポジトリ内のPythonコードを走査してバグや潜在的な脆弱性をチェックしてください。'
+                  '問題が見つかった場合はコードを修正し、Pythonスクリプトとして正常に動作すること、およびシンタックスエラーがないことを確認してください。'
+                  '修正と検証が成功した場合は、その修正内容をまとめた詳細なレポートを \"walkthrough.md\" というファイル名でルート直下に作成し、'
+                  '\"ai-bugfix-antigravity\" という新しいGitブランチを作成して変更をコミット・プッシュしてください。'
+                  '問題が見つからなかった場合は、ファイル作成やブランチ作成などの操作は一切行わずにそのまま終了してください。'
+              )
+              
+              if not os.environ.get('ANTIGRAVITY_API_KEY'):
+                  print('Error: ANTIGRAVITY_API_KEY is not set', file=sys.stderr)
+                  sys.exit(1)
+                  
+              print('Starting Antigravity Agent using Python SDK...')
+              config = LocalAgentConfig()
+              async with Agent(config) as agent:
+                  print('Sending mission to the agent...')
+                  response = await agent.chat(mission)
+                  print('Agent Execution Finished.')
+                  print(await response.text())
+          
+          if __name__ == '__main__':
+              asyncio.run(main())
+          "
 
       - name: Read Walkthrough Report
         id: read_report
