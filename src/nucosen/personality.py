@@ -159,3 +159,125 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
             return winner, tag
         getLogger(__name__).info("セレクションリジェクト {0}".format(winner))
     raise RetryRequested("V31 セレクション失敗 {0} {1}".format(tag, offset))
+
+
+@retry(NetworkErrors, tries=5, delay=1, backoff=2, logger=getLogger(__name__ + ".selectNewArrivals"))
+def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set, cooldownVideos: set = None, categoryTags: List[str] = None, genreTags: List[str] = None, exactTags: List[str] = None, ngTagsExact: set = None, maxAgeHours: int = 24) -> List[str]:
+    """新着動画を指定数 (limit) 抽出します。"""
+    if cooldownVideos is None:
+        cooldownVideos = set()
+    url = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search"
+    header = {
+        "User-Agent": UserAgent
+    }
+    
+    # 対象のタグ（部分一致、完全一致）をリストアップ
+    search_targets = []
+    if tags:
+        for t in tags:
+            if t.strip():
+                search_targets.append((t.strip(), "tags"))
+    if exactTags:
+        for t in exactTags:
+            if t.strip():
+                search_targets.append((t.strip(), "tagsExact"))
+                
+    if not search_targets:
+        getLogger(__name__).warning("新着動画抽出の検索対象タグが設定されていません")
+        return []
+        
+    minimumAllowableDuration = int(config("MIN_ALLOWABLE_DURATION", default=45))
+    maximumAllowableDuration = int(config("MAX_ALLOWABLE_DURATION", default=10 * 60))
+    if maximumAllowableDuration < minimumAllowableDuration:
+        maximumAllowableDuration = minimumAllowableDuration + (10 * 60)
+
+    ngVideos = set(str(config("NG_VIDEO_IDS", default="")).split(","))
+
+    candidates = []
+    
+    from datetime import datetime, timezone, timedelta
+    
+    # 直近のAPI更新時刻（朝5:00）を算出
+    jst = timezone(timedelta(hours=9))
+    now_jst = datetime.now(jst)
+    latest_update_jst = now_jst.replace(hour=5, minute=0, second=0, microsecond=0)
+    if now_jst < latest_update_jst:
+        latest_update_jst = latest_update_jst - timedelta(days=1)
+        
+    lte_str = latest_update_jst.astimezone(timezone.utc).isoformat()
+    gte_time = latest_update_jst - timedelta(hours=maxAgeHours)
+    gte_str = gte_time.astimezone(timezone.utc).isoformat()
+
+    for tag, target_type in search_targets:
+        payload = {
+            "q": tag,
+            "targets": target_type,
+            "fields": "contentId,startTime",
+            "filters[lengthSeconds][gte]": minimumAllowableDuration,
+            "filters[lengthSeconds][lte]": maximumAllowableDuration,
+            "filters[startTime][gte]": gte_str,
+            "filters[startTime][lte]": lte_str,
+            "_sort": "-startTime",  # 投稿日時の降順
+            "_context": UserAgent,
+            "_limit": "30",
+            "_offset": 0
+        }
+        
+        if categoryTags:
+            unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]
+            for i, cat in enumerate(unique_categories):
+                payload[f"filters[categoryTags][{i}]"] = cat
+
+        if genreTags:
+            unique_genres = [g.strip() for g in dict.fromkeys(genreTags) if g.strip()]
+            for i, genre in enumerate(unique_genres):
+                payload[f"filters[genre][{i}]"] = genre
+
+        try:
+            nicovideo_delay()
+            response = get(url, headers=header, params=payload)
+            if response.status_code == 503:
+                continue
+            response.raise_for_status()
+            result = dict(response.json())
+            for target in result.get('data', []):
+                content_id = target["contentId"]
+                start_time_str = target.get("startTime", "")
+                if content_id not in ngVideos and content_id not in cooldownVideos:
+                    candidates.append({
+                        "contentId": content_id,
+                        "startTime": start_time_str
+                    })
+        except Exception as e:
+            getLogger(__name__).warning("タグ「{0}」での新着取得に失敗しました: {1}".format(tag, e))
+
+    if not candidates:
+        return []
+
+    # 重複排除と投稿日時の新しい順にソート
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        if c["contentId"] not in seen:
+            seen.add(c["contentId"])
+            unique_candidates.append(c)
+            
+    # startTime (例: 2023-10-24T12:00:00+09:00) の文字列で降順ソート
+    unique_candidates.sort(key=lambda x: x["startTime"], reverse=True)
+
+    # 引用可能な動画をバリデーションしながら limit 件集める
+    selected_videos = []
+    for c in unique_candidates:
+        winner = c["contentId"]
+        try:
+            if quote.getVideoInfo(winner, session, ngTags, ngTagsExact)[0] is True:
+                selected_videos.append(winner)
+                if len(selected_videos) >= limit:
+                    break
+            else:
+                getLogger(__name__).info("新着セレクションリジェクト (引用不可): {0}".format(winner))
+        except Exception as e:
+            getLogger(__name__).warning("新着動画 {0} の引用可否確認に失敗しました: {1}".format(winner, e))
+
+    return selected_videos
+
