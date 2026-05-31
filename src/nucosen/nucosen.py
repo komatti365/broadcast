@@ -662,58 +662,102 @@ def run():
                 is_special = nextVideoId in get_specific_video_ids() or nextVideoId == config("OPENING_VIDEO_ID")
                 pickup_active = config("PICKUP_MODE_ACTIVE", "False").lower() in ("true", "1", "t", "y", "yes")
 
-                def time_to_datetime_utc(time_str: str) -> datetime:
-                    try:
-                        h, m = map(int, time_str.split(":"))
-                    except Exception:
-                        h, m = 19, 0
+                def get_pickup_slots() -> list[tuple[datetime, datetime]]:
+                    """PICKUP_START_TIME と PICKUP_END_TIME から本日（または跨ぎ）の複数の時間枠（UTC）のリストを生成します。"""
+                    starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
+                    ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
+                    slots = []
+                    
                     jst = timezone(timedelta(hours=9))
                     now_jst = datetime.now(jst)
-                    dt_jst = now_jst.replace(hour=h, minute=m, second=0, microsecond=0)
-                    return dt_jst.astimezone(timezone.utc)
+                    
+                    for s_str, e_str in zip(starts, ends):
+                        try:
+                            s_h, s_m = map(int, s_str.split(":"))
+                            e_h, e_m = map(int, e_str.split(":"))
+                        except Exception:
+                            continue
+                        
+                        # 当日開始のスロット
+                        start_jst = now_jst.replace(hour=s_h, minute=s_m, second=0, microsecond=0)
+                        end_jst = now_jst.replace(hour=e_h, minute=e_m, second=0, microsecond=0)
+                        if end_jst < start_jst:
+                            end_jst += timedelta(days=1)
+                            
+                        slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)))
+                        
+                        # 前日開始のスロット（日またぎ時間枠における、日付変更直後の0:00〜終了時刻までの継続対応用）
+                        start_prev = start_jst - timedelta(days=1)
+                        end_prev = end_jst - timedelta(days=1)
+                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc)))
+                    return slots
 
-                # 1. 開始判定：「次の引用でピックアップモード開始時刻を超えそうになると」
+                pickup_slots = get_pickup_slots()
+                now_utc = datetime.now(timezone.utc)
+                target_end_time = now_utc + videoInfo[1]
+
+                # 1. 開始判定：「次の引用でピックアップモードのいずれかの開始時刻を超えそうになると」
                 if not pickup_active and not is_special:
-                    pickup_start_utc = time_to_datetime_utc(config("PICKUP_START_TIME", "19:00"))
-                    if (datetime.now(timezone.utc) + videoInfo[1]) >= pickup_start_utc:
-                        # 準備されたピックアップ動画が存在するか確認
-                        if database.getPickupQueueCount() > 0:
-                            logger.info("新着ピックアップモードの開始条件を検知しました。キューのバックアップと入れ替えを行います。")
+                    active_slot = None
+                    for slot_start, slot_end in pickup_slots:
+                        if now_utc < slot_end and target_end_time >= slot_start:
+                            active_slot = (slot_start, slot_end)
+                            break
+                            
+                    if active_slot and database.getPickupQueueCount() > 0:
+                        logger.info("新着ピックアップモードの開始条件を検知しました。スロット: %s 〜 %s", active_slot[0], active_slot[1])
+                        try:
+                            # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
+                            database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
+                            os.environ["PICKUP_MODE_ACTIVE"] = "True"
+                            pickup_active = True
+
+                            # 運営コメントで通知
+                            start_msg = "【運営からのお知らせ】次の動画より、前日のニコニコ新着動画をお届けする「新着ピックアップモード」を開始します！通常のリクエスト動画も割り込んで優先再生されます。"
+                            live.showMessage(currentLiveId, start_msg, session)
+
+                            # 現在のキューを退避し、新着ピックアップと入れ替え
+                            database.backupCurrentQueue()
+                            database.replaceQueueWithPickup()
+                        except Exception as e:
+                            logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
                             try:
-                                # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
-                                database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
-                                os.environ["PICKUP_MODE_ACTIVE"] = "True"
-                                pickup_active = True
-
-                                # 運営コメントで通知
-                                start_msg = "【運営からのお知らせ】次の動画より、前日のニコニコ新着動画をお届けする「新着ピックアップモード」を開始します！通常のリクエスト動画も割り込んで優先再生されます。"
-                                live.showMessage(currentLiveId, start_msg, session)
-
-                                # 現在のキューを退避し、新着ピックアップと入れ替え
-                                database.backupCurrentQueue()
-                                database.replaceQueueWithPickup()
-                            except Exception as e:
-                                logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
-                                try:
-                                    # バックアップから通常キューを復元（ロールバック）
-                                    database.restoreBackupQueue()
-                                except Exception as restore_err:
-                                    logger.critical("ロールバック中のキュー復元に失敗しました: %s", restore_err)
-                                
-                                # フラグを False に戻す
-                                try:
-                                    database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
-                                except Exception as db_err:
-                                    logger.error("ロールバック中のフラグ更新失敗: %s", db_err)
-                                os.environ["PICKUP_MODE_ACTIVE"] = "False"
-                                pickup_active = False
+                                # バックアップから通常キューを復元（ロールバック）
+                                database.restoreBackupQueue()
+                            except Exception as restore_err:
+                                logger.critical("ロールバック中のキュー復元に失敗しました: %s", restore_err)
+                            
+                            # フラグを False に戻す
+                            try:
+                                database.publish_settings({"PICKUP_MODE_ACTIVE": "False"})
+                            except Exception as db_err:
+                                logger.error("ロールバック中のフラグ更新失敗: %s", db_err)
+                            os.environ["PICKUP_MODE_ACTIVE"] = "False"
+                            pickup_active = False
 
                 # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
                 elif pickup_active and not is_special:
-                    pickup_end_utc = time_to_datetime_utc(config("PICKUP_END_TIME", "21:00"))
-                    remaining_queue_count = database.getQueueCount() # デキュー済みのため残りの件数
+                    active_slot_end = None
+                    for slot_start, slot_end in pickup_slots:
+                        if now_utc >= slot_start and now_utc < slot_end:
+                            active_slot_end = slot_end
+                            break
+                            
+                    if not active_slot_end:
+                        future_ends = [slot_end for _, slot_end in pickup_slots if slot_end > now_utc]
+                        if future_ends:
+                            active_slot_end = min(future_ends)
+                        else:
+                            try:
+                                h, m = map(int, config("PICKUP_END_TIME", default="21:00").split(",")[0].split(":"))
+                                jst = timezone(timedelta(hours=9))
+                                dt_jst = datetime.now(jst).replace(hour=h, minute=m, second=0, microsecond=0)
+                                active_slot_end = dt_jst.astimezone(timezone.utc)
+                            except Exception:
+                                active_slot_end = now_utc + timedelta(hours=2)
 
-                    is_end_time_over = (datetime.now(timezone.utc) + videoInfo[1]) >= pickup_end_utc
+                    remaining_queue_count = database.getQueueCount() # デキュー済みのため残りの件数
+                    is_end_time_over = target_end_time >= active_slot_end
                     is_last_pickup_video = (remaining_queue_count == 0)
 
                     if is_end_time_over or is_last_pickup_video:
