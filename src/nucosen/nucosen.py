@@ -297,6 +297,9 @@ def run():
         cooldownHistory = collections.deque(maxlen=max(0, config_int("COOLDOWN_SIZE", 50)))
         cooldown_lock = threading.Lock()
 
+        # 新着ピックアップの多重開始防止用（日付文字列, スロットインデックス）
+        last_started_slot = (None, None)
+
         def _build_video_info_message(template: str, info: dict) -> str:
             text = template.replace("\\n", "\n")
             mapping = {
@@ -662,7 +665,7 @@ def run():
                 is_special = nextVideoId in get_specific_video_ids() or nextVideoId == config("OPENING_VIDEO_ID")
                 pickup_active = config("PICKUP_MODE_ACTIVE", "False").lower() in ("true", "1", "t", "y", "yes")
 
-                def get_pickup_slots() -> list[tuple[datetime, datetime]]:
+                def get_pickup_slots() -> list[tuple[datetime, datetime, int]]:
                     """PICKUP_START_TIME と PICKUP_END_TIME から本日（または跨ぎ）の複数の時間枠（UTC）のリストを生成します。"""
                     starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
                     ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
@@ -671,7 +674,7 @@ def run():
                     jst = timezone(timedelta(hours=9))
                     now_jst = datetime.now(jst)
                     
-                    for s_str, e_str in zip(starts, ends):
+                    for idx, (s_str, e_str) in enumerate(zip(starts, ends)):
                         try:
                             s_h, s_m = map(int, s_str.split(":"))
                             e_h, e_m = map(int, e_str.split(":"))
@@ -684,12 +687,12 @@ def run():
                         if end_jst < start_jst:
                             end_jst += timedelta(days=1)
                             
-                        slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc)))
+                        slots.append((start_jst.astimezone(timezone.utc), end_jst.astimezone(timezone.utc), idx))
                         
-                        # 前日開始のスロット（日またぎ時間枠における、日付変更直後の0:00〜終了時刻までの継続対応用）
+                        # 前日開始のスロット（日またぎ対応）
                         start_prev = start_jst - timedelta(days=1)
                         end_prev = end_jst - timedelta(days=1)
-                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc)))
+                        slots.append((start_prev.astimezone(timezone.utc), end_prev.astimezone(timezone.utc), idx))
                     return slots
 
                 pickup_slots = get_pickup_slots()
@@ -699,14 +702,24 @@ def run():
                 # 1. 開始判定：「次の引用でピックアップモードのいずれかの開始時刻を超えそうになると」
                 if not pickup_active and not is_special:
                     active_slot = None
-                    for slot_start, slot_end in pickup_slots:
+                    active_slot_idx = None
+                    now_local = datetime.now()
+                    current_date = now_local.strftime("%Y-%m-%d")
+
+                    for slot_start, slot_end, idx in pickup_slots:
                         if now_utc < slot_end and target_end_time >= slot_start:
-                            active_slot = (slot_start, slot_end)
-                            break
+                            # 本日（または跨ぎの直近）すでに開始済みのスロットでなければ
+                            if last_started_slot != (current_date, idx):
+                                active_slot = (slot_start, slot_end)
+                                active_slot_idx = idx
+                                break
                             
                     if active_slot and database.getPickupQueueCount() > 0:
-                        logger.info("新着ピックアップモードの開始条件を検知しました。スロット: %s 〜 %s", active_slot[0], active_slot[1])
+                        logger.info("新着ピックアップモードの開始条件を検知しました。スロット [%d]: %s 〜 %s", active_slot_idx, active_slot[0], active_slot[1])
                         try:
+                            # 先に開始済みスロットを記録して、多重開始を防ぐ
+                            last_started_slot = (current_date, active_slot_idx)
+
                             # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
                             database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
                             os.environ["PICKUP_MODE_ACTIVE"] = "True"
@@ -721,6 +734,8 @@ def run():
                             database.replaceQueueWithPickup()
                         except Exception as e:
                             logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
+                            # 例外時は記録をリセット
+                            last_started_slot = (None, None)
                             try:
                                 # バックアップから通常キューを復元（ロールバック）
                                 database.restoreBackupQueue()
