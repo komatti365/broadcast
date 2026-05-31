@@ -134,6 +134,32 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
         tagDicts.append({"label": tag, "isLocked": True})
     # TODO - Trueではなく"true"とするべき？
     #        quote.py isSoundOnlyは"true"でないと機能しない
+
+    # ピックアップ時間の動的パースとフォーマット
+    starts = [s.strip() for s in config("PICKUP_START_TIME", default="19:00").split(",") if s.strip()]
+    ends = [e.strip() for e in config("PICKUP_END_TIME", default="21:00").split(",") if e.strip()]
+    
+    if len(starts) != len(ends):
+        getLogger(__name__).warning(
+            "設定エラー: PICKUP_START_TIME (要素数 %d) と PICKUP_END_TIME (要素数 %d) の数が一致しません。短い方に合わせて処理されます。",
+            len(starts), len(ends)
+        )
+    
+    pickup_ranges = []
+    for s, e in zip(starts, ends):
+        pickup_ranges.append(f"{s}〜{e}")
+        
+    pickup_time_str = ", ".join(pickup_ranges) if pickup_ranges else "未設定"
+
+    # 番組説明文の取得と置換
+    base_description = str(
+        config(
+            "NUCOSEN_LIVE_DESCRIPTION",
+            default='<font size="+1">NUCOSenへようこそ！</font>',
+        )
+    )
+    replaced_description = base_description.replace("{pickup_time}", pickup_time_str)
+
     return {
         "title": "{0}".format(category),
         # NOTE - For users who will modify this text:
@@ -141,12 +167,7 @@ def generateLiveDict(category: str, communityId: str, tags: List[str]):
         #        If you modify the program (including this text),
         #        you must disclose the source code in accordance with AGPLv3.
         #        Violation of the license will be actionable under copyright law.
-        "description": str(
-            config(
-                "NUCOSEN_LIVE_DESCRIPTION",
-                default='<font size="+1">NUCOSenへようこそ！</font>',
-            )
-        )
+        "description": replaced_description
         + "<br /><br />========== Powered by STSen =========="
         + "<br />この生放送はBotにより自動的に配信されています。<br />"
         + "配信システムのソースコードは "
