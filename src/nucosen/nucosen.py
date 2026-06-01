@@ -155,7 +155,7 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                                 max_attempts -= 1
                     
                     if selections:
-                        logger.info("%d 件 of 動画をキューに補充します: %s", len(selections), selections)
+                        logger.info("%d 件の動画をキューに補充します: %s", len(selections), selections)
                         # preloader 自体がバックグラウンドスレッドで動くため、通常の同期的な enqueueByList を実行
                         database.enqueueByList(selections)
             except Exception as err:
