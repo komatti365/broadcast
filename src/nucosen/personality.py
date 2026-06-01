@@ -18,7 +18,7 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from logging import getLogger
-from random import randint, shuffle, uniform
+from random import choice, randint, shuffle, uniform
 from time import sleep
 from typing import List, Optional, Tuple
 
@@ -100,7 +100,28 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         raise ValueError("検索対象のタグが設定されていません")
         
     tag, target_type = search_targets.pop()
-    offset = randint(0, 90)
+    
+    # ソート順の多様化
+    sort_options = [
+        "-lastCommentTime",  # 最終コメント順（最近アクティブ）
+        "-startTime",        # 投稿日時の新しい順（比較的新しい）
+        "+startTime",        # 投稿日時の古い順（懐かしい）
+        "-viewCounter",      # 再生数の多い順（人気・定番）
+        "-mylistCounter",    # マイリスト数の多い順（支持されている名曲含む）
+        "-commentCounter"    # コメント数の多い順（賑やか）
+    ]
+    selected_sort = choice(sort_options)
+
+    # ソート順に応じたオフセット調整（API制限の最大1600を超えない安全設計）
+    if selected_sort in ("-viewCounter", "-mylistCounter", "-commentCounter"):
+        # 人気順などは上位すぎる部分を避けて中堅も拾えるように広めに設定
+        offset = randint(0, 500)
+    elif selected_sort == "+startTime":
+        # 古い順は最初期すぎるエラー（最古の動画など）を避けつつ発掘
+        offset = randint(0, 300)
+    else:
+        offset = randint(0, 400)
+
     minimumAllowableDuration = \
         int(config("MIN_ALLOWABLE_DURATION", default=45))
     maximumAllowableDuration = \
@@ -113,7 +134,7 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         "fields": "contentId",
         "filters[lengthSeconds][gte]": minimumAllowableDuration,
         "filters[lengthSeconds][lte]": maximumAllowableDuration,
-        "_sort": "-lastCommentTime",
+        "_sort": selected_sort,
         "_context": UserAgent,
         "_limit": "30",
         "_offset": offset
@@ -209,6 +230,18 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
     gte_str = gte_time.astimezone(timezone.utc).isoformat()
 
     for tag, target_type in search_targets:
+        # 新着向けのソート順多様化
+        new_arrival_sort_options = [
+            "-startTime",      # 投稿日時が新しい順
+            "-viewCounter",    # 再生数が多い順
+            "-mylistCounter",  # マイリスト数が多い順
+            "-commentCounter"  # コメント数が多い順
+        ]
+        selected_sort = choice(new_arrival_sort_options)
+
+        # 新着動画は母数が少ないため、オフセットは控えめにばらつかせる
+        offset = randint(0, 5)
+
         payload = {
             "q": tag,
             "targets": target_type,
@@ -217,10 +250,10 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
             "filters[lengthSeconds][lte]": maximumAllowableDuration,
             "filters[startTime][gte]": gte_str,
             "filters[startTime][lte]": lte_str,
-            "_sort": "-startTime",  # 投稿日時の降順
+            "_sort": selected_sort,
             "_context": UserAgent,
             "_limit": "30",
-            "_offset": 0
+            "_offset": offset
         }
         
         if categoryTags:
