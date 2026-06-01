@@ -40,6 +40,9 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
         logger = getLogger(__name__ + ".preloader")
         logger.info("バックグラウンドのキュー監視スレッドを開始しました")
         
+        # 新着枯渇時の連続リトライを防ぐクールダウンタイマー
+        last_pickup_failed_time = datetime.min
+        
         while True:
             try:
                 pickup_active = config("PICKUP_MODE_ACTIVE", default="False").lower() in ("true", "1", "t", "y", "yes")
@@ -52,16 +55,21 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
 
                 current_queue_count = database.getQueueCount()
                 if current_queue_count < queuePreloadSize:
-                    logger.info(
-                        "キュー不足を検知しました: 現在 %d 件, 目標 %d 件。補充を開始します。",
-                        current_queue_count,
-                        queuePreloadSize,
-                    )
                     missing = queuePreloadSize - current_queue_count
                     selections = []
 
-                    if pickup_active:
+                    # クールダウン（5分間）の判定
+                    is_cooldown = pickup_active and (datetime.now() - last_pickup_failed_time).total_seconds() < 300
+
+                    if is_cooldown:
+                        logger.debug("【新着自動補充】新着枯渇によるクールダウン中のため、補充をスキップします。")
+                    elif pickup_active:
                         # 新着ピックアップ用の自動補充
+                        logger.info(
+                            "キュー不足を検知しました（新着モード）: 現在 %d 件, 目標 %d 件。補充を開始します。",
+                            current_queue_count,
+                            queuePreloadSize,
+                        )
                         logger.info("【新着自動補充】ピックアップモード中のキュー不足を検知しました。新着動画から %d 件補充します。", missing)
                         try:
                             # 設定パラメータの取得
@@ -98,14 +106,24 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                                 maxAgeHours=max_age_hours
                             )
                             selections = new_arrivals
+                            
+                            # 1件も補充できなかった場合は、新着が枯渇していると判定してクールダウンを開始
+                            if not selections:
+                                logger.warning("【新着自動補充】条件に合う新着動画が検出されませんでした。5分間補充を保留（クールダウン）します。")
+                                last_pickup_failed_time = datetime.now()
                         except Exception as pickup_err:
                             logger.error("【新着自動補充】新着自動補充の選出に失敗しました: %s", pickup_err)
                             selections = []
                     else:
                         # 通常のランダム自動補充
+                        logger.info(
+                            "キュー不足を検知しました（通常モード）: 現在 %d 件, 目標 %d 件。補充を開始します。",
+                            current_queue_count,
+                            queuePreloadSize,
+                        )
                         max_attempts = 5
                         
-                        # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
+                        # 現在キューにあるIDとcooldownHistoryとマージして重複を防止
                         existing_video_ids = database.getQueueVideoIds()
                         with cooldown_lock:
                             history_copy = list(cooldownHistory)
@@ -137,7 +155,7 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                                 max_attempts -= 1
                     
                     if selections:
-                        logger.info("%d 件の動画をキューに補充します: %s", len(selections), selections)
+                        logger.info("%d 件 of 動画をキューに補充します: %s", len(selections), selections)
                         # preloader 自体がバックグラウンドスレッドで動くため、通常の同期的な enqueueByList を実行
                         database.enqueueByList(selections)
             except Exception as err:
