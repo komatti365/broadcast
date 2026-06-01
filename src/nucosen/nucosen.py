@@ -42,11 +42,7 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
         
         while True:
             try:
-                # ピックアップモードがアクティブな場合は自動補充をスキップ
-                if config("PICKUP_MODE_ACTIVE", default="False").lower() in ("true", "1", "t", "y", "yes"):
-                    logger.debug("新着ピックアップモードが有効なため、キューの自動補充をスキップします。")
-                    time.sleep(30)
-                    continue
+                pickup_active = config("PICKUP_MODE_ACTIVE", default="False").lower() in ("true", "1", "t", "y", "yes")
 
                 # QUEUE_PRELOAD_SIZE の動的取得
                 try:
@@ -63,38 +59,82 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                     )
                     missing = queuePreloadSize - current_queue_count
                     selections = []
-                    max_attempts = 5
-                    
-                    # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
-                    existing_video_ids = database.getQueueVideoIds()
-                    with cooldown_lock:
-                        history_copy = list(cooldownHistory)
-                    temp_cooldown = set(history_copy) | existing_video_ids
-                    
-                    # NG_TAGS の動的取得
-                    ng_tags_set = set(config("NG_TAGS", "").split(","))
-                    ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
-                    
-                    # REQTAGS_EXACT の動的取得
-                    req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
-                    
-                    # CATEGORY_TAGS の動的取得
-                    category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
-                    
-                    # GENRE_TAGS の動的取得
-                    genre_tags_list = [c.strip() for c in config("GENRE_TAGS", "").split(",") if c.strip()]
-                    
-                    while missing > 0 and max_attempts > 0:
+
+                    if pickup_active:
+                        # 新着ピックアップ用の自動補充
+                        logger.info("【新着自動補充】ピックアップモード中のキュー不足を検知しました。新着動画から %d 件補充します。", missing)
                         try:
-                            # 補充用動画IDの選定
-                            selection, _ = personality.randomSelection(
-                                config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown, categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
-                            selections.append(selection)
-                            temp_cooldown.add(selection)
-                            missing -= 1
-                        except Exception as err:
-                            logger.warning("ランダム選定に失敗しました: %s", err)
-                            max_attempts -= 1
+                            # 設定パラメータの取得
+                            try:
+                                max_age_hours = max(1, int(config("PICKUP_MAX_AGE_HOURS", default="24")))
+                            except ValueError:
+                                max_age_hours = 24
+                                
+                            tags = config("REQTAGS").split(",")
+                            exact_tags = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                            category_tags = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
+                            genre_tags = [g.strip() for g in config("GENRE_TAGS", "").split(",") if g.strip()]
+                            
+                            ng_tags_set = set(config("NG_TAGS", "").split(","))
+                            ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                            
+                            # 現在のキューおよびcooldownHistoryとマージして重複を回避
+                            existing_video_ids = database.getQueueVideoIds()
+                            with cooldown_lock:
+                                history_copy = list(cooldownHistory)
+                            temp_cooldown = set(history_copy) | existing_video_ids
+                            
+                            # 新着動画を選出して末尾に追加
+                            new_arrivals = personality.selectNewArrivals(
+                                tags=tags,
+                                session=session,
+                                limit=missing,
+                                ngTags=ng_tags_set,
+                                cooldownVideos=temp_cooldown,
+                                categoryTags=category_tags,
+                                genreTags=genre_tags,
+                                exactTags=exact_tags,
+                                ngTagsExact=ng_tags_exact_set,
+                                maxAgeHours=max_age_hours
+                            )
+                            selections = new_arrivals
+                        except Exception as pickup_err:
+                            logger.error("【新着自動補充】新着自動補充の選出に失敗しました: %s", pickup_err)
+                            selections = []
+                    else:
+                        # 通常のランダム自動補充
+                        max_attempts = 5
+                        
+                        # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
+                        existing_video_ids = database.getQueueVideoIds()
+                        with cooldown_lock:
+                            history_copy = list(cooldownHistory)
+                        temp_cooldown = set(history_copy) | existing_video_ids
+                        
+                        # NG_TAGS の動的取得
+                        ng_tags_set = set(config("NG_TAGS", "").split(","))
+                        ng_tags_exact_set = set(t.strip() for t in config("NG_TAGS_EXACT", "").split(",") if t.strip())
+                        
+                        # REQTAGS_EXACT の動的取得
+                        req_tags_exact = [t.strip() for t in config("REQTAGS_EXACT", "").split(",") if t.strip()]
+                        
+                        # CATEGORY_TAGS の動的取得
+                        category_tags_list = [c.strip() for c in config("CATEGORY_TAGS", "").split(",") if c.strip()]
+                        
+                        # GENRE_TAGS の動的取得
+                        genre_tags_list = [c.strip() for c in config("GENRE_TAGS", "").split(",") if c.strip()]
+                        
+                        while missing > 0 and max_attempts > 0:
+                            try:
+                                # 補充用動画IDの選定
+                                selection, _ = personality.randomSelection(
+                                    config("REQTAGS").split(","), session, ng_tags_set, temp_cooldown, categoryTags=category_tags_list, genreTags=genre_tags_list, exactTags=req_tags_exact, ngTagsExact=ng_tags_exact_set)
+                                selections.append(selection)
+                                temp_cooldown.add(selection)
+                                missing -= 1
+                            except Exception as err:
+                                logger.warning("ランダム選定に失敗しました: %s", err)
+                                max_attempts -= 1
                     
                     if selections:
                         logger.info("%d 件の動画をキューに補充します: %s", len(selections), selections)
@@ -731,22 +771,24 @@ def run():
                 if not pickup_active and not is_special:
                     active_slot = None
                     active_slot_idx = None
-                    now_local = datetime.now()
-                    current_date = now_local.strftime("%Y-%m-%d")
+                    active_slot_key = None
 
                     for slot_start, slot_end, idx in pickup_slots:
                         if now_utc < slot_end and target_end_time >= slot_start:
-                            # 本日（または跨ぎの直近）すでに開始済みのスロットでなければ
-                            if last_started_slot != (current_date, idx):
+                            # スロット開始予定日のローカル日付を一意なキーとして、日付またぎ時の多重開始を防ぐ
+                            slot_start_jst = slot_start.astimezone(timezone(timedelta(hours=9)))
+                            slot_key = slot_start_jst.strftime("%Y-%m-%d")
+                            if last_started_slot != (slot_key, idx):
                                 active_slot = (slot_start, slot_end)
                                 active_slot_idx = idx
+                                active_slot_key = slot_key
                                 break
                             
                     if active_slot and database.getPickupQueueCount() > 0:
                         logger.info("新着ピックアップモードの開始条件を検知しました。スロット [%d]: %s 〜 %s", active_slot_idx, active_slot[0], active_slot[1])
                         try:
                             # 先に開始済みスロットを記録して、多重開始を防ぐ
-                            last_started_slot = (current_date, active_slot_idx)
+                            last_started_slot = (active_slot_key, active_slot_idx)
 
                             # 先にフラグをアクティブにし、Preloaderによる自動補充を一時停止する（レースコンディション回避）
                             database.publish_settings({"PICKUP_MODE_ACTIVE": "True"})
@@ -799,11 +841,9 @@ def run():
                             except Exception:
                                 active_slot_end = now_utc + timedelta(hours=2)
 
-                    remaining_queue_count = database.getQueueCount() # デキュー済みのため残りの件数
                     is_end_time_over = target_end_time >= active_slot_end
-                    is_last_pickup_video = (remaining_queue_count == 0)
 
-                    if is_end_time_over or is_last_pickup_video:
+                    if is_end_time_over:
                         logger.info("新着ピックアップモードの終了条件を検知しました。キューの復元を行います。")
                         try:
                             # 運営コメントで通知
