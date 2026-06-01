@@ -18,7 +18,7 @@ along with NUCOSen Broadcast.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from logging import getLogger
-from random import randint, shuffle, uniform
+from random import choice, randint, shuffle, uniform
 from time import sleep
 from typing import List, Optional, Tuple
 
@@ -49,6 +49,15 @@ NetworkErrors = (HTTPError, ConnError, RetryRequested)
 def floatConfig(key, default=0.0):
     try:
         return float(config(key, default=str(default)))
+    except (TypeError, ValueError):
+        return default
+
+def intConfig(key, default=0):
+    try:
+        val = config(key, default="")
+        if not val or not val.strip():
+            return default
+        return int(val)
     except (TypeError, ValueError):
         return default
 
@@ -100,7 +109,50 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         raise ValueError("検索対象のタグが設定されていません")
         
     tag, target_type = search_targets.pop()
-    offset = randint(0, 90)
+    
+    # 設定値の動的取得 (安全なintConfigを使用)
+    minor_min_view = intConfig("MINOR_MIN_VIEW", default=100)
+    minor_min_mylist = intConfig("MINOR_MIN_MYLIST", default=10)
+    minor_min_like = intConfig("MINOR_MIN_LIKE", default=10)
+
+    # ソート順の多様化
+    sort_options = [
+        "-lastCommentTime",  # 最終コメント順（最近アクティブ）
+        "-startTime",        # 投稿日時の新しい順（比較的新しい）
+        "+startTime",        # 投稿日時の古い順（懐かしい）
+        "-viewCounter",      # 再生数の多い順（人気・定番）
+        "-mylistCounter",    # マイリスト数の多い順（支持されている名曲含む）
+        "-commentCounter",   # コメント数の多い順（賑やか）
+        "-likeCounter",      # いいね！数の多い順（評価が高い）
+        "+viewCounter",      # 【マイナー発掘】再生数の少ない順
+        "+mylistCounter",    # 【マイナー発掘】マイリスト数の少ない順
+        "+likeCounter"       # 【マイナー発掘】いいね！数の少ない順
+    ]
+    selected_sort = choice(sort_options)
+
+    # ソート順に応じたオフセット調整および足切りフィルタの追加
+    extra_filters = {}
+    if selected_sort in ("-viewCounter", "-mylistCounter", "-commentCounter", "-likeCounter"):
+        # 人気順などは上位すぎる部分を避けて中堅も拾えるように広めに設定
+        offset = randint(0, 500)
+    elif selected_sort == "+startTime":
+        # 古い順は最初期すぎるエラー（最古の動画など）を避けつつ発掘
+        offset = randint(0, 300)
+    elif selected_sort == "+viewCounter":
+        # マイナー発掘: 設定された最低再生数以上の動画から少ない順で取得
+        extra_filters["filters[viewCounter][gte]"] = minor_min_view
+        offset = randint(0, 100)
+    elif selected_sort == "+mylistCounter":
+        # マイナー発掘: 設定された最低マイリスト以上の動画から少ない順で取得
+        extra_filters["filters[mylistCounter][gte]"] = minor_min_mylist
+        offset = randint(0, 100)
+    elif selected_sort == "+likeCounter":
+        # マイナー発掘: 設定された最低いいね！以上の動画から少ない順で取得
+        extra_filters["filters[likeCounter][gte]"] = minor_min_like
+        offset = randint(0, 100)
+    else:
+        offset = randint(0, 400)
+
     minimumAllowableDuration = \
         int(config("MIN_ALLOWABLE_DURATION", default=45))
     maximumAllowableDuration = \
@@ -113,11 +165,13 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         "fields": "contentId",
         "filters[lengthSeconds][gte]": minimumAllowableDuration,
         "filters[lengthSeconds][lte]": maximumAllowableDuration,
-        "_sort": "-lastCommentTime",
+        "_sort": selected_sort,
         "_context": UserAgent,
         "_limit": "30",
         "_offset": offset
     }
+    # マイナー発掘用足切りフィルタを反映
+    payload.update(extra_filters)
 
     if categoryTags:
         unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]
@@ -140,6 +194,27 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         result = dict(response.json())
     except Exception as e:
         raise RetryRequested("スナップショット検索のレスポンス解析に失敗しました: {0}".format(e))
+
+    # 【レビュー反映】オフセット超過により検索結果が空になった場合の自動リカバリー
+    total_count = result.get("meta", {}).get("totalCount", 0)
+    if not result.get("data") and total_count > 0:
+        # 総件数を超えない安全なオフセットをその場で算出（_limit=30分を考慮、1600の上限にも配慮）
+        safe_max_offset = max(0, min(total_count - 30, 1500))
+        new_offset = randint(0, safe_max_offset) if safe_max_offset > 0 else 0
+        
+        getLogger(__name__).info(
+            "【リカバリー】オフセット超過を検知しました (総件数: %d, 指定オフセット: %d)。安全なオフセット (%d) で再検索します。タグ: %s",
+            total_count, offset, new_offset, tag
+        )
+        
+        payload["_offset"] = new_offset
+        nicovideo_delay()
+        response = get(url, headers=header, params=payload)
+        response.raise_for_status()
+        try:
+            result = dict(response.json())
+        except Exception as e:
+            raise RetryRequested("スナップショット再検索のレスポンス解析に失敗しました: {0}".format(e))
     winners: List[str] = []
     cooldown_fallback: List[str] = []
     for target in result['data']:
@@ -208,7 +283,24 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
     gte_time = latest_update_jst - timedelta(hours=maxAgeHours)
     gte_str = gte_time.astimezone(timezone.utc).isoformat()
 
+    # 設定値の動的取得 (安全なintConfigを使用)
+    minor_min_view = intConfig("MINOR_MIN_VIEW", default=100)
+
     for tag, target_type in search_targets:
+        # 新着向けのソート順多様化
+        new_arrival_sort_options = [
+            "-startTime",      # 投稿日時が新しい順
+            "-viewCounter",    # 再生数が多い順
+            "-mylistCounter",  # マイリスト数が多い順
+            "-commentCounter", # コメント数が多い順
+            "-likeCounter",    # いいね！数が多い順
+            "+viewCounter"     # 再生数が少ない順（未発掘新着）
+        ]
+        selected_sort = choice(new_arrival_sort_options)
+
+        # レビュー反映：新着取りこぼし防止のため、オフセットは常に 0 に固定
+        offset = 0
+
         payload = {
             "q": tag,
             "targets": target_type,
@@ -217,11 +309,15 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
             "filters[lengthSeconds][lte]": maximumAllowableDuration,
             "filters[startTime][gte]": gte_str,
             "filters[startTime][lte]": lte_str,
-            "_sort": "-startTime",  # 投稿日時の降順
+            "_sort": selected_sort,
             "_context": UserAgent,
             "_limit": "30",
-            "_offset": 0
+            "_offset": offset
         }
+
+        # 新着の昇順時は母数が少ないため、動的最低再生数の10%（最低でも10再生）を安全に足切り設定
+        if selected_sort == "+viewCounter":
+            payload["filters[viewCounter][gte]"] = max(10, int(minor_min_view * 0.1))
         
         if categoryTags:
             unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]

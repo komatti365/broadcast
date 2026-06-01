@@ -781,13 +781,13 @@ def run():
                 # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
                 elif pickup_active and not is_special:
                     active_slot_end = None
-                    for slot_start, slot_end in pickup_slots:
+                    for slot_start, slot_end, _ in pickup_slots:
                         if now_utc >= slot_start and now_utc < slot_end:
                             active_slot_end = slot_end
                             break
                             
                     if not active_slot_end:
-                        future_ends = [slot_end for _, slot_end in pickup_slots if slot_end > now_utc]
+                        future_ends = [slot_end for _, slot_end, _ in pickup_slots if slot_end > now_utc]
                         if future_ends:
                             active_slot_end = min(future_ends)
                         else:
