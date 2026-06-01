@@ -845,15 +845,15 @@ def run():
 
                 # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
                 elif pickup_active and not is_special:
-                    # 現在時刻以降、または直近にアクティブだったスロットを特定する
+                    # 現在アクティブな、または直近にアクティブだったスロットを特定する
                     # (開始時刻が現在時刻以前であるスロットの中で、最も開始時刻が新しいものを探す)
                     past_or_active_slots = [
                         (start, end, idx) for start, end, idx in pickup_slots if now_utc >= start
                     ]
                     
                     if past_or_active_slots:
-                        past_or_active_slots.sort(key=lambda x: x[0], reverse=True)
-                        current_slot_start, current_slot_end, current_slot_idx = past_or_active_slots[0]
+                        # 最も新しい開始時刻を持つスロットを特定
+                        _, current_slot_end, _ = max(past_or_active_slots, key=lambda x: x[0])
                         
                         # 終了判定:
                         # 1. すでに現在時刻がスロット終了時刻を過ぎている、または
