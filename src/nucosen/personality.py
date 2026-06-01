@@ -52,6 +52,15 @@ def floatConfig(key, default=0.0):
     except (TypeError, ValueError):
         return default
 
+def intConfig(key, default=0):
+    try:
+        val = config(key, default="")
+        if not val or not val.strip():
+            return default
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
 def nicovideo_delay():
     delay = max(0.0, floatConfig("NICO_REQUEST_DELAY", 1.0))
     if delay <= 0:
@@ -101,10 +110,10 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         
     tag, target_type = search_targets.pop()
     
-    # 設定値の動的取得
-    minor_min_view = int(config("MINOR_MIN_VIEW", default=100))
-    minor_min_mylist = int(config("MINOR_MIN_MYLIST", default=10))
-    minor_min_like = int(config("MINOR_MIN_LIKE", default=10))
+    # 設定値の動的取得 (安全なintConfigを使用)
+    minor_min_view = intConfig("MINOR_MIN_VIEW", default=100)
+    minor_min_mylist = intConfig("MINOR_MIN_MYLIST", default=10)
+    minor_min_like = intConfig("MINOR_MIN_LIKE", default=10)
 
     # ソート順の多様化
     sort_options = [
@@ -253,8 +262,8 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
     gte_time = latest_update_jst - timedelta(hours=maxAgeHours)
     gte_str = gte_time.astimezone(timezone.utc).isoformat()
 
-    # 設定値の動的取得
-    minor_min_view = int(config("MINOR_MIN_VIEW", default=100))
+    # 設定値の動的取得 (安全なintConfigを使用)
+    minor_min_view = intConfig("MINOR_MIN_VIEW", default=100)
 
     for tag, target_type in search_targets:
         # 新着向けのソート順多様化
@@ -268,8 +277,8 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
         ]
         selected_sort = choice(new_arrival_sort_options)
 
-        # 新着動画は母数が少ないため、オフセットは控えめにばらつかせる
-        offset = randint(0, 5)
+        # レビュー反映：新着取りこぼし防止のため、オフセットは常に 0 に固定
+        offset = 0
 
         payload = {
             "q": tag,
