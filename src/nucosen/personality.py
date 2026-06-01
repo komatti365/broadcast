@@ -358,8 +358,8 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
             seen.add(c["contentId"])
             unique_candidates.append(c)
             
-    # startTime (例: 2023-10-24T12:00:00+09:00) の文字列で降順ソート
-    unique_candidates.sort(key=lambda x: x["startTime"], reverse=True)
+    # 投稿日時でのソートを廃止し、シャッフルすることで時間的な偏りをなくす
+    shuffle(unique_candidates)
 
     # 引用可能な動画をバリデーションしながら limit 件集める
     selected_videos = []
