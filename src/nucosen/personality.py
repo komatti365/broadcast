@@ -194,6 +194,27 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         result = dict(response.json())
     except Exception as e:
         raise RetryRequested("スナップショット検索のレスポンス解析に失敗しました: {0}".format(e))
+
+    # 【レビュー反映】オフセット超過により検索結果が空になった場合の自動リカバリー
+    total_count = result.get("meta", {}).get("totalCount", 0)
+    if not result.get("data") and total_count > 0:
+        # 総件数を超えない安全なオフセットをその場で算出（_limit=30分を考慮、1600の上限にも配慮）
+        safe_max_offset = max(0, min(total_count - 30, 1500))
+        new_offset = randint(0, safe_max_offset) if safe_max_offset > 0 else 0
+        
+        getLogger(__name__).info(
+            "【リカバリー】オフセット超過を検知しました (総件数: %d, 指定オフセット: %d)。安全なオフセット (%d) で再検索します。タグ: %s",
+            total_count, offset, new_offset, tag
+        )
+        
+        payload["_offset"] = new_offset
+        nicovideo_delay()
+        response = get(url, headers=header, params=payload)
+        response.raise_for_status()
+        try:
+            result = dict(response.json())
+        except Exception as e:
+            raise RetryRequested("スナップショット再検索のレスポンス解析に失敗しました: {0}".format(e))
     winners: List[str] = []
     cooldown_fallback: List[str] = []
     for target in result['data']:
