@@ -101,6 +101,11 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         
     tag, target_type = search_targets.pop()
     
+    # 設定値の動的取得
+    minor_min_view = int(config("MINOR_MIN_VIEW", default=100))
+    minor_min_mylist = int(config("MINOR_MIN_MYLIST", default=10))
+    minor_min_like = int(config("MINOR_MIN_LIKE", default=10))
+
     # ソート順の多様化
     sort_options = [
         "-lastCommentTime",  # 最終コメント順（最近アクティブ）
@@ -108,17 +113,34 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         "+startTime",        # 投稿日時の古い順（懐かしい）
         "-viewCounter",      # 再生数の多い順（人気・定番）
         "-mylistCounter",    # マイリスト数の多い順（支持されている名曲含む）
-        "-commentCounter"    # コメント数の多い順（賑やか）
+        "-commentCounter",   # コメント数の多い順（賑やか）
+        "-likeCounter",      # いいね！数の多い順（評価が高い）
+        "+viewCounter",      # 【マイナー発掘】再生数の少ない順
+        "+mylistCounter",    # 【マイナー発掘】マイリスト数の少ない順
+        "+likeCounter"       # 【マイナー発掘】いいね！数の少ない順
     ]
     selected_sort = choice(sort_options)
 
-    # ソート順に応じたオフセット調整（API制限の最大1600を超えない安全設計）
-    if selected_sort in ("-viewCounter", "-mylistCounter", "-commentCounter"):
+    # ソート順に応じたオフセット調整および足切りフィルタの追加
+    extra_filters = {}
+    if selected_sort in ("-viewCounter", "-mylistCounter", "-commentCounter", "-likeCounter"):
         # 人気順などは上位すぎる部分を避けて中堅も拾えるように広めに設定
         offset = randint(0, 500)
     elif selected_sort == "+startTime":
         # 古い順は最初期すぎるエラー（最古の動画など）を避けつつ発掘
         offset = randint(0, 300)
+    elif selected_sort == "+viewCounter":
+        # マイナー発掘: 設定された最低再生数以上の動画から少ない順で取得
+        extra_filters["filters[viewCounter][gte]"] = minor_min_view
+        offset = randint(0, 100)
+    elif selected_sort == "+mylistCounter":
+        # マイナー発掘: 設定された最低マイリスト以上の動画から少ない順で取得
+        extra_filters["filters[mylistCounter][gte]"] = minor_min_mylist
+        offset = randint(0, 100)
+    elif selected_sort == "+likeCounter":
+        # マイナー発掘: 設定された最低いいね！以上の動画から少ない順で取得
+        extra_filters["filters[likeCounter][gte]"] = minor_min_like
+        offset = randint(0, 100)
     else:
         offset = randint(0, 400)
 
@@ -139,6 +161,8 @@ def randomSelection(tags: List[str], session: Session, ngTags: set, cooldownVide
         "_limit": "30",
         "_offset": offset
     }
+    # マイナー発掘用足切りフィルタを反映
+    payload.update(extra_filters)
 
     if categoryTags:
         unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]
@@ -229,13 +253,18 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
     gte_time = latest_update_jst - timedelta(hours=maxAgeHours)
     gte_str = gte_time.astimezone(timezone.utc).isoformat()
 
+    # 設定値の動的取得
+    minor_min_view = int(config("MINOR_MIN_VIEW", default=100))
+
     for tag, target_type in search_targets:
         # 新着向けのソート順多様化
         new_arrival_sort_options = [
             "-startTime",      # 投稿日時が新しい順
             "-viewCounter",    # 再生数が多い順
             "-mylistCounter",  # マイリスト数が多い順
-            "-commentCounter"  # コメント数が多い順
+            "-commentCounter", # コメント数が多い順
+            "-likeCounter",    # いいね！数が多い順
+            "+viewCounter"     # 再生数が少ない順（未発掘新着）
         ]
         selected_sort = choice(new_arrival_sort_options)
 
@@ -255,6 +284,10 @@ def selectNewArrivals(tags: List[str], session: Session, limit: int, ngTags: set
             "_limit": "30",
             "_offset": offset
         }
+
+        # 新着の昇順時は母数が少ないため、動的最低再生数の10%（最低でも10再生）を安全に足切り設定
+        if selected_sort == "+viewCounter":
+            payload["filters[viewCounter][gte]"] = max(10, int(minor_min_view * 0.1))
         
         if categoryTags:
             unique_categories = [c.strip() for c in dict.fromkeys(categoryTags) if c.strip()]
