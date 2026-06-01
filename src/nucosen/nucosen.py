@@ -58,14 +58,13 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                     missing = queuePreloadSize - current_queue_count
                     selections = []
 
-                    if pickup_active:
-                        # クールダウン（5分間）のチェック
-                        now = datetime.now()
-                        if (now - last_pickup_failed_time).total_seconds() < 300:
-                            logger.debug("【新着自動補充】新着枯渇によるクールダウン中のため、補充をスキップします。")
-                            time.sleep(30)
-                            continue
+                    # クールダウン（5分間）の判定
+                    is_cooldown = pickup_active and (datetime.now() - last_pickup_failed_time).total_seconds() < 300
 
+                    if is_cooldown:
+                        logger.debug("【新着自動補充】新着枯渇によるクールダウン中のため、補充をスキップします。")
+                    elif pickup_active:
+                        # 新着ピックアップ用の自動補充
                         logger.info(
                             "キュー不足を検知しました（新着モード）: 現在 %d 件, 目標 %d 件。補充を開始します。",
                             current_queue_count,
@@ -116,15 +115,15 @@ def start_queue_preloader(database, session, cooldownHistory, cooldown_lock, con
                             logger.error("【新着自動補充】新着自動補充の選出に失敗しました: %s", pickup_err)
                             selections = []
                     else:
+                        # 通常のランダム自動補充
                         logger.info(
                             "キュー不足を検知しました（通常モード）: 現在 %d 件, 目標 %d 件。補充を開始します。",
                             current_queue_count,
                             queuePreloadSize,
                         )
-                        # 通常のランダム自動補充
                         max_attempts = 5
                         
-                        # 現在キューにあるIDとcooldownHistoryをマージして重複を防止
+                        # 現在キューにあるIDとcooldownHistoryとマージして重複を防止
                         existing_video_ids = database.getQueueVideoIds()
                         with cooldown_lock:
                             history_copy = list(cooldownHistory)
