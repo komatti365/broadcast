@@ -845,26 +845,23 @@ def run():
 
                 # 2. 終了判定：「ピックアップキューが終わる直前の動画が再生されるか、次の引用で指定時刻を過ぎそうになるところ」
                 elif pickup_active and not is_special:
-                    active_slot_end = None
-                    for slot_start, slot_end, _ in pickup_slots:
-                        if now_utc >= slot_start and now_utc < slot_end:
-                            active_slot_end = slot_end
-                            break
-                            
-                    if not active_slot_end:
-                        future_ends = [slot_end for _, slot_end, _ in pickup_slots if slot_end > now_utc]
-                        if future_ends:
-                            active_slot_end = min(future_ends)
-                        else:
-                            try:
-                                h, m = map(int, config("PICKUP_END_TIME", default="21:00").split(",")[0].split(":"))
-                                jst = timezone(timedelta(hours=9))
-                                dt_jst = datetime.now(jst).replace(hour=h, minute=m, second=0, microsecond=0)
-                                active_slot_end = dt_jst.astimezone(timezone.utc)
-                            except Exception:
-                                active_slot_end = now_utc + timedelta(hours=2)
-
-                    is_end_time_over = target_end_time >= active_slot_end
+                    # 現在アクティブな、または直近にアクティブだったスロットを特定する
+                    # (開始時刻が現在時刻以前であるスロットの中で、最も開始時刻が新しいものを探す)
+                    past_or_active_slots = [
+                        (start, end, idx) for start, end, idx in pickup_slots if now_utc >= start
+                    ]
+                    
+                    if past_or_active_slots:
+                        # 最も新しい開始時刻を持つスロットを特定
+                        _, current_slot_end, _ = max(past_or_active_slots, key=lambda x: x[0])
+                        
+                        # 終了判定:
+                        # 1. すでに現在時刻がスロット終了時刻を過ぎている、または
+                        # 2. 次の動画の終了見込み時刻がスロット終了時刻を過ぎる
+                        is_end_time_over = (now_utc >= current_slot_end) or (target_end_time >= current_slot_end)
+                    else:
+                        # 過去に開始されたスロットが見つからない場合のセーフティ
+                        is_end_time_over = True
 
                     if is_end_time_over:
                         logger.info("新着ピックアップモードの終了条件を検知しました。キューの復元を行います。")
