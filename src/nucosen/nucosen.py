@@ -786,6 +786,7 @@ def run():
                             
                     if active_slot and database.getPickupQueueCount() > 0:
                         logger.info("新着ピックアップモードの開始条件を検知しました。スロット [%d]: %s 〜 %s", active_slot_idx, active_slot[0], active_slot[1])
+                        backup_done = False
                         try:
                             # 先に開始済みスロットを記録して、多重開始を防ぐ
                             last_started_slot = (active_slot_key, active_slot_idx)
@@ -801,16 +802,20 @@ def run():
 
                             # 現在のキューを退避し、新着ピックアップと入れ替え
                             database.backupCurrentQueue()
+                            backup_done = True
                             database.replaceQueueWithPickup()
                         except Exception as e:
                             logger.error("新着ピックアップモードの開始処理中に例外が発生しました。ロールバックを実行します: %s", e)
                             # 例外時は記録をリセット
                             last_started_slot = (None, None)
-                            try:
-                                # バックアップから通常キューを復元（ロールバック）
-                                database.restoreBackupQueue()
-                            except Exception as restore_err:
-                                logger.critical("ロールバック中のキュー復元に失敗しました: %s", restore_err)
+                            if backup_done:
+                                try:
+                                    # バックアップから通常キューを復元（ロールバック）
+                                    database.restoreBackupQueue()
+                                except Exception as restore_err:
+                                    logger.critical("ロールバック中のキュー復元に失敗しました: %s", restore_err)
+                            else:
+                                logger.info("バックアップが未作成のため、ロールバックでのキュー復元はスキップします。")
                             
                             # フラグを False に戻す
                             try:
