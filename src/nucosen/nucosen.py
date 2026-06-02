@@ -242,18 +242,16 @@ def start_pickup_preparer(database, session, config):
                             maxAgeHours=max_age_hours
                         )
                         
-                        # 前回のピックアップキューを確実にクリア
-                        database.clearPickupQueue()
-                        
                         if new_arrivals:
                             logger.info("新着動画 %d 件を検出しました: %s. pickup_queueに登録します。", len(new_arrivals), new_arrivals)
+                            database.clearPickupQueue()
                             database.addPickupQueueItems(new_arrivals)
                             logger.info("新着ピックアップキューの登録が完了しました。")
+                            
+                            if not force_prepare:
+                                last_prepared_date = current_date
                         else:
                             logger.warning("新着動画が検出されませんでした。")
-                            
-                        if not force_prepare:
-                            last_prepared_date = current_date
                             
                     finally:
                         # 強制実行の場合は、終了後に自動的にオフ（False）に戻す
