@@ -191,7 +191,7 @@ def start_pickup_preparer(database, session, config):
                 try:
                     p_hour, p_minute = map(int, prepare_time_str.split(":"))
                 except ValueError:
-                    p_hour, p_minute = 5, 0
+                    p_hour, p_minute = 8, 0
                     
                 # 本日の準備予定日時
                 scheduled_time = now.replace(hour=p_hour, minute=p_minute, second=0, microsecond=0)
