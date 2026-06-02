@@ -186,8 +186,8 @@ def start_pickup_preparer(database, session, config):
                 now = datetime.now(jst)
                 current_date = now.strftime("%Y-%m-%d")
                 
-                # 設定の準備時刻をパース（デフォルト 05:00）
-                prepare_time_str = config("PICKUP_PREPARE_TIME", default="05:00")
+                # 設定の準備時刻をパース（デフォルト 08:00）
+                prepare_time_str = config("PICKUP_PREPARE_TIME", default="08:00")
                 try:
                     p_hour, p_minute = map(int, prepare_time_str.split(":"))
                 except ValueError:
@@ -242,9 +242,11 @@ def start_pickup_preparer(database, session, config):
                             maxAgeHours=max_age_hours
                         )
                         
+                        # 前回のピックアップキューを確実にクリア
+                        database.clearPickupQueue()
+                        
                         if new_arrivals:
                             logger.info("新着動画 %d 件を検出しました: %s. pickup_queueに登録します。", len(new_arrivals), new_arrivals)
-                            database.clearPickupQueue()
                             database.addPickupQueueItems(new_arrivals)
                             logger.info("新着ピックアップキューの登録が完了しました。")
                         else:
