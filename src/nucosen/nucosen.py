@@ -186,12 +186,12 @@ def start_pickup_preparer(database, session, config):
                 now = datetime.now(jst)
                 current_date = now.strftime("%Y-%m-%d")
                 
-                # 設定の準備時刻をパース（デフォルト 05:00）
-                prepare_time_str = config("PICKUP_PREPARE_TIME", default="05:00")
+                # 設定の準備時刻をパース（デフォルト 08:00）
+                prepare_time_str = config("PICKUP_PREPARE_TIME", default="08:00")
                 try:
                     p_hour, p_minute = map(int, prepare_time_str.split(":"))
                 except ValueError:
-                    p_hour, p_minute = 5, 0
+                    p_hour, p_minute = 8, 0
                     
                 # 本日の準備予定日時
                 scheduled_time = now.replace(hour=p_hour, minute=p_minute, second=0, microsecond=0)
@@ -247,11 +247,11 @@ def start_pickup_preparer(database, session, config):
                             database.clearPickupQueue()
                             database.addPickupQueueItems(new_arrivals)
                             logger.info("新着ピックアップキューの登録が完了しました。")
+                            
+                            if not force_prepare:
+                                last_prepared_date = current_date
                         else:
                             logger.warning("新着動画が検出されませんでした。")
-                            
-                        if not force_prepare:
-                            last_prepared_date = current_date
                             
                     finally:
                         # 強制実行の場合は、終了後に自動的にオフ（False）に戻す
