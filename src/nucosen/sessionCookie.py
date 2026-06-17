@@ -53,34 +53,6 @@ class Session(object):
     def login(self):
         getLogger(__name__).error("Cookie以外の旧来のログイン方法（ID/パスワード）は現在無効化されています。")
         raise RuntimeError("Cloudflare Turnstile対策のため、ID/パスワードでの自動ログインは無効化されています。ブラウザから新しいCookieをエクスポートし、Cookieファイルとして保存して再実行してください。")
-        # --- 以下の旧来のログイン処理は無効化されました ---
-        # header = {
-        #     "User-Agent": self.user_agent,
-        #     "Content-Type": "application/x-www-form-urlencoded"
-        # }
-        # with httpx.Client() as client:
-        #     resp = client.post(
-        #         "https://account.nicovideo.jp/login/redirector",
-        #         data={
-        #             "mail_tel": self.mail_tel,
-        #             "password": self.password
-        #         },
-        #         headers=header,
-        #         follow_redirects=False
-        #     )
-        #     resp.raise_for_status()
-        #     if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
-        #         jar = RequestsCookieJar()
-        #         jar.update(client.cookies)
-        #         self.cookie = jar
-        #         getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
-        #         self._auto_save_cookie()
-        #         return
-        #     if "mfa_session" in resp.cookies:
-        #         self.__mfa_login(resp, header)
-        #         getLogger(__name__).info("MFA成功")
-        #         return
-        #     raise ReLoginRequested("L15 ログイン失敗")
 
     def __mfa_login(self, resp: httpx.Response, header):
         raise RuntimeError("MFAログインも現在無効化されています。")
