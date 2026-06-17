@@ -23,7 +23,7 @@ from typing import Optional
 import json
 from pathlib import Path
 
-from pyotp import TOTP
+
 import httpx
 from requests.cookies import RequestsCookieJar
 from retry import retry
@@ -51,83 +51,11 @@ class Session(object):
 
     @retry(NetworkErrors, tries=3, delay=1, backoff=2, logger=getLogger(__name__ + ".login"))
     def login(self):
-        header = {
-            "User-Agent": self.user_agent,
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        with httpx.Client() as client:
-            resp = client.post(
-                "https://account.nicovideo.jp/login/redirector",
-                data={
-                    "mail_tel": self.mail_tel,
-                    "password": self.password
-                },
-                headers=header,
-                follow_redirects=False
-            )
-            resp.raise_for_status()
-            # レビュー4: resp.cookies はすでに httpx.Cookies なので余計な再ラップを排します。
-            # さらに、他モジュールが期待する RequestsCookieJar に変換して格納します。
-            if "user_session" in resp.cookies and resp.cookies.get("user_session") not in ("deleted", ""):
-                jar = RequestsCookieJar()
-                jar.update(client.cookies)
-                self.cookie = jar
-                getLogger(__name__).info("ユーザー名/パスワードによるログイン成功")
-                self._auto_save_cookie()
-                return
-            if "mfa_session" in resp.cookies:
-                self.__mfa_login(resp, header)
-                getLogger(__name__).info("MFA成功")
-                return
-            raise ReLoginRequested("L15 ログイン失敗")
+        getLogger(__name__).error("Cookie以外の旧来のログイン方法（ID/パスワード）は現在無効化されています。")
+        raise RuntimeError("Cloudflare Turnstile対策のため、ID/パスワードでの自動ログインは無効化されています。ブラウザから新しいCookieをエクスポートし、Cookieファイルとして保存して再実行してください。")
 
     def __mfa_login(self, resp: httpx.Response, header):
-        if not self.mfa_token:
-            getLogger(__name__).error("ニコニコ動画で2段階認証が要求されましたが、NICO_TFA (MFAトークン) が設定されていません。")
-            raise ReLoginRequested("V40 MFA失敗 (トークン未設定)")
-        try:
-            import base64
-            # pyotpのデコード処理と同様に、スペースを除去した上でBase32としてデコード可能か検証します
-            base64.b32decode(self.mfa_token.replace(" ", ""), casefold=True)
-        except Exception as e:
-            getLogger(__name__).error(f"MFAトークン (NICO_TFA) のデコードに失敗しました。Base32形式が正しいか確認してください: {e}")
-            raise ReLoginRequested("V40 MFA失敗 (トークン不正)")
-        tfac = TOTP(self.mfa_token)
-        
-        # 既存のCookieをhttpx.Cookiesとして展開し、セッションを開始
-        current_cookies = httpx.Cookies()
-        current_cookies.update(resp.cookies)
-
-        with httpx.Client(cookies=current_cookies) as client:
-            mfaResp = client.post(
-                resp.headers["Location"],
-                data={
-                    "otp": tfac.now(),
-                    "is_mfa_trusted_device": "false",
-                },
-                headers=header,
-                follow_redirects=False,
-            )
-            mfaResp.raise_for_status()
-            
-            final_resp = client.get(
-                mfaResp.headers["Location"],
-                headers={"User-Agent": self.user_agent},
-                follow_redirects=False
-            )
-            final_resp.raise_for_status()
-            
-            # レビュー5: クライアント経由で自動マージされた最新のCookie一覧を取得
-            updated_cookies = client.cookies
-
-        if "user_session" in updated_cookies and updated_cookies.get("user_session") not in ("deleted", ""):
-            jar = RequestsCookieJar()
-            jar.update(updated_cookies)
-            self.cookie = jar
-            getLogger(__name__).info("ユーザー名/パスワード（MFA付き）によるログイン成功")
-            self._auto_save_cookie()
-            return
-        raise ReLoginRequested("V40 MFA失敗")
+        raise RuntimeError("MFAログインも現在無効化されています。")
 
     def _auto_save_cookie(self):
         cookie_file = config("NICO_COOKIE_FILE", default="")
