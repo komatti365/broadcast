@@ -189,16 +189,23 @@ class Session(object):
             raise FileNotFoundError(path)
         if p.stat().st_size == 0:
             raise ValueError(f"クッキーファイルが空です: {path}")
+        jar = RequestsCookieJar()
         try:
             with p.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"クッキーファイルのJSON形式が不正です: {path} ({e})")
-        if not isinstance(data, dict):
-            raise ValueError(f"クッキーファイルは辞書形式である必要があります: {path}")
-        jar = RequestsCookieJar()
-        for name, value in data.items():
-            jar.set(name, value, domain=".nicovideo.jp", path="/")
+            if not isinstance(data, dict):
+                raise ValueError(f"クッキーファイルは辞書形式である必要があります: {path}")
+            for name, value in data.items():
+                jar.set(name, value, domain=".nicovideo.jp", path="/")
+        except json.JSONDecodeError as json_e:
+            import http.cookiejar
+            try:
+                mozilla_jar = http.cookiejar.MozillaCookieJar(path)
+                mozilla_jar.load()
+                for cookie in mozilla_jar:
+                    jar.set_cookie(cookie)
+            except Exception as e:
+                raise ValueError(f"クッキーファイルの形式が不正です。JSONでもNetscape形式でもありません: {path} (JSON Error: {json_e}, Netscape Error: {e})")
         session = cls(mail_tel, password, mfa_token, user_agent=user_agent)
         session.cookie = jar
         getLogger(__name__).info("認証済み情報によるログイン")
