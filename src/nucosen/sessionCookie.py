@@ -23,7 +23,7 @@ from typing import Optional
 import json
 from pathlib import Path
 
-from pyotp import TOTP
+
 import httpx
 from requests.cookies import RequestsCookieJar
 from retry import retry
